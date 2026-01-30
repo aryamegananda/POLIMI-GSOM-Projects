@@ -1,5 +1,7 @@
 # Risk Screening Under Limited Review Capacity
 
+Individual Project
+
 🚧 **Status: Ongoing project**
 
 This project explores decision-making under operational constraints in a fraud risk screening context.
