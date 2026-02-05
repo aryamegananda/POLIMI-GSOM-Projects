@@ -1,4 +1,3 @@
-# POLIMI-GSOM-Projects
 # Master’s Projects in Data Science & Business Analytics
 
 This repository is a personal learning space developed alongside my Master’s program in **Business Analytics & Data Science** at Politecnico di Milano.
