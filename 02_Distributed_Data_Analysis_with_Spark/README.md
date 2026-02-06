@@ -21,17 +21,32 @@ The project focuses on distributed data processing concepts, not predictive mode
 ---
 
 ## What Was Done
-•	Loaded and structured transactional retail data using Spark DataFrames
-•	Designed multiple intermediate DataFrames to support analysis
-•	Performed aggregations by:
-o	product category and sub-category,
-o	customer segment,
-o	city and region,
-o	time (daily / monthly patterns)
-•	Analyzed shipping performance and delivery efficiency
-•	Implemented customer value and loyalty segmentation logic
-•	Constructed derived metrics such as a city-level “wealth index”
-Each analytical question was implemented through a dedicated Spark pipeline.
+The project was carried out through a structured analytical workflow using Apache Spark DataFrames:
+1. Data Preparation
+   - Loaded the Superstore transactional dataset into Spark.
+   - Inspected schema and data types.
+   - Performed basic cleaning and formatting to ensure consistency across fields (dates, categories, numerical values).
+2. DataFrame Design
+   - Constructed base transactional DataFrames as the foundation of the analysis.
+   - Created intermediate DataFrames to support specific analytical questions.
+   - Designed joins and aggregations to combine sales, customer, product, and shipping information.
+3. Sales and Product Analysis
+   - Aggregated sales and revenue by category and sub-category.
+   - Identified top-performing products across different cities.
+   - Analyzed revenue contribution and concentration patterns.
+4. Customer Segmentation
+   - Segmented customers by purchasing behavior and total spending.
+   - Identified high-value (“Gold-tier”) customers.
+   - Compared customer segments across time and geography.
+5. Logistics and Shipping Performance
+   - Analyzed delivery delays and shipping efficiency.
+   - Computed failure rates for promised shipping times.
+   - Compared logistics performance across cities and regions.
+6. Geographic and Temporal Analysis
+   - Examined sales patterns by city and region.
+   - Analyzed time-based trends (monthly and daily behavior).
+   - Constructed a city-level “wealth index” based on customer value concentration.
+Each step was implemented using Spark DataFrame transformations (filter, groupBy, agg, joins), emphasizing clarity and analytical logic over optimization.
 
 ---
 
