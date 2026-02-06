@@ -7,7 +7,7 @@ This project explores sales performance, customer behavior, and logistics effici
 The main objective is to understand how Apache Spark DataFrames can be used to design scalable analytical pipelines for business-oriented questions.
 ## Data
 -	**Dataset**: Superstore Sales Dataset
--	**Source**: Public retail dataset [Kaggle](https://www.kaggle.com/datasets/rohitsahoo/sales-forecasting?resource=download)
+-	**Source**: Public retail dataset [Kaggle](https://www.kaggle.com/datasets/rohitsahoo/sales-forecasting)
 -	**Type**: Transaction-level sales data
 -	**Scope**: Orders, customers, products, shipping, geography, and time
 The dataset spans multiple years and regions, making it suitable for aggregation-heavy and segmentation-based analysis.
