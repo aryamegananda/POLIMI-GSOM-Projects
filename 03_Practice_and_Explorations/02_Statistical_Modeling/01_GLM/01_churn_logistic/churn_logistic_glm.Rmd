@@ -1,0 +1,136 @@
+---
+title: "Customer Churn Modeling with Logistic Regression (GLM)"
+output: html_document
+---
+
+## 01 Data Inspection
+
+```{r}
+# Load data
+data <- read.csv("Data/retail_dataset.csv")
+
+# Inspect
+dim(data)
+colnames(data)
+str(data)
+head(data)
+
+# Outcome check
+table(data$churned)
+```
+
+## 02 Dataset Transformation
+
+```{r}
+# Select customer-level variables
+keep_vars <- c(
+  "customer_id","churned","age","gender","income_bracket",
+  "loyalty_program","membership_years",
+  "days_since_last_purchase","website_visits",
+  "app_usage","social_media_engagement",
+  "online_purchases","in_store_purchases",
+  "customer_support_calls"
+)
+
+cust_data <- data[, keep_vars]
+
+# Keep one row per customer
+cust_data <- cust_data[!duplicated(cust_data$customer_id), ]
+
+# Convert churn to binary
+cust_data$churned <- ifelse(cust_data$churned == "Yes", 1, 0)
+
+# Convert categorical variables
+cust_data$gender <- as.factor(cust_data$gender)
+cust_data$income_bracket <- as.factor(cust_data$income_bracket)
+cust_data$loyalty_program <- as.factor(cust_data$loyalty_program)
+cust_data$app_usage <- as.factor(cust_data$app_usage)
+cust_data$social_media_engagement <- as.factor(cust_data$social_media_engagement)
+
+# Sanity checks
+dim(cust_data)
+table(cust_data$churned)
+```
+
+## 03 Baseline Logistic Regression (GLM)
+
+```{r}
+# Fit baseline logistic regression model
+glm_baseline <- glm(
+  churned ~ 
+    days_since_last_purchase +
+    website_visits +
+    app_usage +
+    social_media_engagement +
+    online_purchases +
+    in_store_purchases +
+    customer_support_calls +
+    age +
+    income_bracket +
+    loyalty_program +
+    membership_years,
+  data = cust_data,
+  family = binomial
+)
+
+# Model summary
+summary(glm_baseline)
+nobs(glm_baseline)
+```
+
+## 04 Model Diagnostics
+
+```{r}
+# Predicted probabilities
+pred_prob <- predict(glm_baseline, type = "response")
+
+# Basic summary
+summary(pred_prob)
+
+# Check range
+range(pred_prob)
+
+# Histogram of predicted probabilities
+hist(
+  pred_prob,
+  breaks = 50,
+  main = "Distribution of Predicted Churn Probabilities",
+  xlab = "Predicted Probability of Churn"
+)
+
+# Intepretation:
+# The distribution of predicted probabilities is tightly centered around 0.5, indicating limited discriminative power of the baseline logistic regression. This is consistent with small coefficient magnitudes and minimal reduction in deviance relative to the null model, suggesting that the included predictors provide weak signal for churn classification.
+
+```
+
+## 05 Model Evaluation
+
+```{r}
+# Choose a probability threshold
+pred_class <- ifelse(pred_prob > 0.5, 1, 0)
+
+# Confusion matrix
+table(
+  Predicted = pred_class,
+  Actual = cust_data$churned
+)
+
+# ROC curve and AUC
+library(pROC)
+
+roc_obj <- roc(cust_data$churned, pred_prob)
+
+# Plot ROC curve
+plot(
+  roc_obj,
+  main = "ROC Curve for Logistic Regression Churn Model"
+)
+
+# AUC value
+auc(roc_obj)
+
+# Interpretation:
+# The baseline logistic regression exhibits no meaningful discriminative power (AUC ≈ 0.50), indicating that the included behavioral and demographic predictors provide insufficient signal to distinguish churned from non-churned customers. This result is consistent across coefficient estimates, predicted probability distributions, confusion matrix performance, and ROC analysis, suggesting that churn in this dataset is largely unpredictable under a linear logit specification.
+
+```
+
