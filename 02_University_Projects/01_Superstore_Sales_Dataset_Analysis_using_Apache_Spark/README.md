@@ -62,7 +62,6 @@ These observations highlight the value of structured analytical design in distri
 ## Notes
 - This is a completed academic group project.
 - The emphasis is on analytical reasoning and Spark DataFrame design, rather than optimization or production deployment.
-- The notebook and presentation reflect the final submitted version.
 
 ---
 
