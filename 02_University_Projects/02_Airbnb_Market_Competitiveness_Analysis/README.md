@@ -11,6 +11,7 @@ The project also demonstrates how model diagnostics and statistical reasoning gu
 - **Source**: Public dataset from [Kaggle](https://www.kaggle.com/datasets/airbnb/boston)
 - **Type**: Listing-level marketplace data
 - **Scope**: Listing attributes, pricing, host characteristics, location, and review activity
+
 The dataset contains detailed information on Airbnb listings in Boston, including pricing, property characteristics, host information, and review counts. These variables allow the analysis of factors influencing listing competitiveness within the platform.
 ## Tools & Methods
 - **R** for statistical analysis
