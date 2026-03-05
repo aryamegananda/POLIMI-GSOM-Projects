@@ -51,7 +51,7 @@ The project follows a structured analytical workflow combining data preparation,
 5. Negative Binomial Regression
    - Implemented Negative Binomial regression to account for overdispersion.
    - Verified improved model fit through dispersion statistics and AIC comparison.
-   = Interpreted Incidence Rate Ratios (IRR) to understand economic effects of predictors.
+   - Interpreted Incidence Rate Ratios (IRR) to understand economic effects of predictors.
 6. Model Robustness Checks
    - Evaluated coefficient stability across model specifications.
    - Applied cluster-robust standard errors at the host level to account for multiple listings owned by the same host.
@@ -81,5 +81,3 @@ The project follows a structured analytical workflow combining data preparation,
 - Rihab Junaid Basheer Ahmed
 - Pulkit Pratap Singh
 - Ahmed Riadh Khezami
-
-can you make the formating the same with what i gave you
