@@ -1,0 +1,695 @@
+---
+title: "05_GLM_nb_modeling"
+output: html_document
+---
+
+```{r}
+# STEP 0 - Output Setup and Helper
+out_dir  <- "../output/GLM_NB"
+out_file <- file.path(out_dir, "NB_Modeling_Report.txt")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+while (sink.number() > 0) sink()
+
+if (file.exists(out_file)) file.remove(out_file)
+
+sink(out_file)
+
+# ---------------------------------------------------------
+# Helper: cluster-robust SE table (host_id)
+# ---------------------------------------------------------
+robust_nb <- function(model, cluster_vec) {
+  V <- vcovCL(model, cluster = cluster_vec, type = "HC0")
+  coeftest(model, vcov. = V)
+}
+
+library(MASS)      # glm.nb
+library(lmtest)    # coeftest
+library(sandwich)  # vcovCL
+
+```
+
+```{r}
+# STEP 1 - Clean Data Loading 
+
+# 1.1 Load data
+df_clean <- read.csv("../data/processed/listings_cleaned.csv",
+                     stringsAsFactors = FALSE)
+
+# 1.2 Convert relevant variables to factor
+df_clean$room_type <- as.factor(df_clean$room_type)
+df_clean$property_type <- as.factor(df_clean$property_type)
+df_clean$property_type <- relevel(df_clean$property_type, ref = "Apartment")
+df_clean$neighbourhood_cleansed <- as.factor(df_clean$neighbourhood_cleansed)
+df_clean$instant_bookable <- as.factor(df_clean$instant_bookable)
+df_clean$cancellation_policy <- as.factor(df_clean$cancellation_policy)
+df_clean$host_is_superhost <- as.factor(df_clean$host_is_superhost)
+df_clean$host_identity_verified <- as.factor(df_clean$host_identity_verified)
+ 
+```
+
+```{r}
+# STEP 2 - NB Kitchen Sink (full)
+cat("\n=========================================\n")
+cat("GLM NEGATIVE BINOMIAL MODELING REPORT\n")
+cat("Generated:", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n")
+cat("=========================================\n\n")
+
+# ---------------------------------------------------------
+# Define variable blocks for Ladder
+#   - Structural: listing + location + friction (+ pricing extras)
+#   - Host block: professionalism / scale
+#   - Rating block: perceived quality
+# Kitchen = Structural + Host + Rating
+# ---------------------------------------------------------
+
+# Structural block (Table 1)
+f_structural <- number_of_reviews ~
+  log_price + extra_people + guests_included +
+  room_type + accommodates +
+  property_type +
+  neighbourhood_cleansed + distance_to_center_km +
+  amenities_count +
+  minimum_nights + instant_bookable + cancellation_policy +
+  offset(log(months_active))
+
+# Host block additions (Table 2)
+f_host_add <- ~ . +
+  host_is_superhost + host_response_rate + host_acceptance_rate +
+  host_identity_verified + host_response_time_ord + log_host_listings_count
+
+# Rating block additions (Table 3)
+f_rating_add <- ~ . + review_scores_rating
+
+# Kitchen = Table 3 (full)
+f_kitchen <- update(f_structural, f_host_add)
+f_kitchen <- update(f_kitchen, f_rating_add)
+
+model_nb_kitchen <- glm.nb(f_kitchen, data = df_clean)
+
+cat("--- NB summary (kitchen) ---\n\n")
+print(summary(model_nb_kitchen))
+
+cat("\n--- Cluster-robust SE (host_id) : Kitchen ---\n\n")
+print(robust_nb(model_nb_kitchen, df_clean$host_id))
+
+cat("\n--- AIC (NB kitchen) ---\n")
+cat("AIC:", AIC(model_nb_kitchen), "\n")
+
+cat("\n--- Theta (overdispersion parameter) ---\n")
+cat("theta:", model_nb_kitchen$theta, "\n")
+cat("SE(theta):", model_nb_kitchen$SE.theta, "\n")
+
+```
+
+```{r}
+# STEP 3 - Preparation Same-sample Dataset for Ladder
+cat("\n=========================================\n")
+cat("STEP 3 - Same-sample dataset for Ladder\n")
+cat("=========================================\n\n")
+
+vars_all <- c(
+  "number_of_reviews", "months_active",
+  "log_price", "extra_people", "guests_included",
+  "room_type", "accommodates",
+  "property_type", "neighbourhood_cleansed", "distance_to_center_km",
+  "amenities_count", "minimum_nights", "instant_bookable", "cancellation_policy",
+  "host_is_superhost", "host_response_rate", "host_acceptance_rate",
+  "host_identity_verified", "host_response_time_ord", "log_host_listings_count",
+  "review_scores_rating",
+  "host_id"
+)
+
+df_nb_cc <- df_clean[complete.cases(df_clean[, vars_all]), ]
+
+cat("N (complete-case for all ladder models):", nrow(df_nb_cc), "\n")
+```
+
+```{r}
+# STEP 4 - Ladder Models (NB) on SAME SAMPLE
+cat("\n=========================================\n")
+cat("STEP 4 - NB Ladder Models (same sample)\n")
+cat("=========================================\n\n")
+
+# Table 1 — Structural
+cat("-----------------------------------------\n")
+cat("TABLE 1 — Structural (listing + location + friction)\n")
+cat("-----------------------------------------\n\n")
+
+model_nb_t1 <- glm.nb(f_structural, data = df_nb_cc)
+print(summary(model_nb_t1))
+
+cat("\n--- Cluster-robust SE (host_id) : Table 1 ---\n\n")
+print(robust_nb(model_nb_t1, df_nb_cc$host_id))
+
+# Table 2 — + Host
+cat("\n-----------------------------------------\n")
+cat("TABLE 2 — Structural + Host professionalism\n")
+cat("-----------------------------------------\n\n")
+
+model_nb_t2 <- glm.nb(update(f_structural, f_host_add), data = df_nb_cc)
+print(summary(model_nb_t2))
+
+cat("\n--- Cluster-robust SE (host_id) : Table 2 ---\n\n")
+print(robust_nb(model_nb_t2, df_nb_cc$host_id))
+
+# Table 3 — + Rating (Kitchen)
+cat("\n-----------------------------------------\n")
+cat("TABLE 3 — Structural + Host + Rating (Kitchen)\n")
+cat("-----------------------------------------\n\n")
+
+model_nb_t3 <- glm.nb(update(update(f_structural, f_host_add), f_rating_add), data = df_nb_cc)
+print(summary(model_nb_t3))
+
+cat("\n--- Cluster-robust SE (host_id) : Table 3 ---\n\n")
+print(robust_nb(model_nb_t3, df_nb_cc$host_id))
+
+```
+
+```{r}
+# STEP 5 - Stability checks (key drivers across ladder)
+cat("\n=========================================\n")
+cat("STEP 5 - Stability Check (Key Drivers)\n")
+cat("=========================================\n\n")
+
+# Core drivers
+key_vars <- c(
+  "log_price",
+  "distance_to_center_km",
+  "minimum_nights",
+  "instant_bookable1",
+  "accommodates",
+  "amenities_count",
+  "host_is_superhost1",
+  "host_acceptance_rate",
+  "log_host_listings_count",
+  "review_scores_rating"
+)
+
+extract_coefs <- function(m, vars) {
+  b <- coef(m)
+  out <- b[intersect(names(b), vars)]
+  out
+}
+
+cat("--- Coefficients (Table 1) ---\n")
+print(extract_coefs(model_nb_t1, key_vars))
+
+cat("\n--- Coefficients (Table 2) ---\n")
+print(extract_coefs(model_nb_t2, key_vars))
+
+cat("\n--- Coefficients (Table 3) ---\n")
+print(extract_coefs(model_nb_t3, key_vars))
+
+cat("\n--- AIC Comparison (same sample) ---\n")
+print(AIC(model_nb_t1, model_nb_t2, model_nb_t3))
+
+# Quick % interpretation for a couple of common changes
+cat("\n--- Quick % effects (Table 3) ---\n")
+
+cat("\n=========================================\n")
+cat("STEP 6 - Likelihood Ratio Tests (NB Ladder)\n")
+cat("=========================================\n")
+
+cat("\n--- Table 1 vs Table 2 ---\n")
+lrt_12 <- anova(model_nb_t1, model_nb_t2, test = "LRT")
+print(lrt_12)
+
+cat("\n--- Table 2 vs Table 3 ---\n")
+lrt_23 <- anova(model_nb_t2, model_nb_t3, test = "LRT")
+print(lrt_23)
+
+b_price <- coef(model_nb_t3)["log_price"]
+if (!is.na(b_price)) {
+  eff_price_10pct <- exp(b_price * log(1.10)) - 1
+  cat("10% higher price ->", round(100 * eff_price_10pct, 2),
+      "% change in expected review rate\n")
+}
+
+b_dist <- coef(model_nb_t3)["distance_to_center_km"]
+if (!is.na(b_dist)) {
+  eff_dist_1km <- exp(b_dist) - 1
+  cat("1 km farther from center ->", round(100 * eff_dist_1km, 2),
+      "% change in expected review rate\n")
+}
+
+b_acc <- coef(model_nb_t3)["accommodates"]
+if (!is.na(b_acc)) {
+  eff_acc_1 <- exp(b_acc) - 1
+  cat("1 more accommodates ->", round(100 * eff_acc_1, 2),
+      "% change in expected review rate\n")
+}
+
+b_amen <- coef(model_nb_t3)["amenities_count"]
+if (!is.na(b_amen)) {
+  eff_amen_1 <- exp(b_amen) - 1
+  cat("1 more amenity ->", round(100 * eff_amen_1, 2),
+      "% change in expected review rate\n")
+}
+
+b_super <- coef(model_nb_t3)["host_is_superhost1"]
+if (!is.na(b_super)) {
+  eff_super <- exp(b_super) - 1
+  cat("Superhost (vs non) ->", round(100 * eff_super, 2),
+      "% change in expected review rate\n")
+}
+
+b_accpt <- coef(model_nb_t3)["host_acceptance_rate"]
+if (!is.na(b_accpt)) {
+  eff_accpt_10pp <- exp(b_accpt * 10) - 1  # +10 percentage points
+  cat("Host acceptance rate +10pp ->", round(100 * eff_accpt_10pp, 2),
+      "% change in expected review rate\n")
+}
+
+b_hscale <- coef(model_nb_t3)["log_host_listings_count"]
+if (!is.na(b_hscale)) {
+  cat("Host scale (log_host_listings_count): coef =", round(b_hscale, 3),
+      "(interpret via scenario changes in host listings)\n")
+}
+
+# ---------------------------------------------------------
+# END
+# ---------------------------------------------------------
+cat("\n=========================================\n")
+cat("END OF NB MODELING\n")
+cat("Report saved to:\n", out_file, "\n")
+cat("=========================================\n")
+
+sink()
+```
+
+```{r}
+# STEP 7 - Kitchen IRR line plots (single model, orange line)
+cat("\n=========================================\n")
+cat("STEP 7 - Kitchen IRR Line Plots (Orange)\n")
+cat("=========================================\n")
+
+library(dplyr)
+library(ggplot2)
+library(tibble)
+
+dir_plots <- file.path(out_dir, "plots")
+if (!dir.exists(dir_plots)) dir.create(dir_plots, recursive = TRUE)
+
+KITCHEN_ORANGE <- "#F8766D"
+
+# Extract kitchen coefficients
+b_kitchen <- coef(model_nb_kitchen)
+
+get_coef <- function(b, term) {
+  if (term %in% names(b)) as.numeric(b[term]) else NA_real_
+}
+
+# Build + plot a single-line IRR chart
+plot_kitchen_line <- function(terms, labels, title, subtitle, filename) {
+
+  df_irr <- tibble(
+    term = terms,
+    beta = sapply(terms, function(t) get_coef(b_kitchen, t)),
+    model = "Kitchen"
+  ) %>%
+    mutate(
+      irr = exp(beta),
+      label = dplyr::case_when(
+        term %in% names(labels) ~ labels[term],
+        TRUE ~ term
+      ),
+      label = factor(label, levels = unname(labels[terms]))
+    )
+
+  p <- ggplot(df_irr, aes(x = label, y = irr, group = model, color = model)) +
+    geom_hline(yintercept = 1, linetype = "dashed") +
+    geom_point(size = 3, na.rm = TRUE) +
+    geom_line(na.rm = TRUE) +
+    scale_color_manual(values = c("Kitchen" = KITCHEN_ORANGE)) +
+    theme_minimal() +
+    labs(
+      title = title,
+      subtitle = subtitle,
+      x = NULL,
+      y = "Incidence Rate Ratio (IRR = exp(β))"
+    ) +
+    theme(axis.text.x = element_text(angle = 20, hjust = 1))
+
+  plot_file <- file.path(dir_plots, filename)
+  ggsave(plot_file, p, width = 9, height = 5, dpi = 300)
+
+  cat("Saved:", plot_file, "\n")
+  invisible(df_irr)
+}
+
+# -----------------------
+# 1) Pricing + Location
+# -----------------------
+terms_1 <- c("log_price", "distance_to_center_km")
+labels_1 <- c(
+  log_price = "log_price",
+  distance_to_center_km = "distance_to_center_km"
+)
+plot_kitchen_line(
+  terms = terms_1,
+  labels = labels_1,
+  title = "Kitchen IRR — Pricing + Location (NB)",
+  subtitle = "Single-model IRR pattern (Kitchen sink)",
+  filename = "NB_Kitchen_IRR_Pricing_Location.png"
+)
+
+# -----------------------
+# 2) Listing attributes (+ Room type)
+# -----------------------
+terms_2 <- c(
+  "accommodates",
+  "amenities_count",
+  "room_typePrivate room",
+  "room_typeShared room"
+)
+labels_2 <- c(
+  accommodates = "accommodates",
+  amenities_count = "amenities_count",
+  `room_typePrivate room` = "private_room",
+  `room_typeShared room`  = "shared_room"
+)
+plot_kitchen_line(
+  terms = terms_2,
+  labels = labels_2,
+  title = "Kitchen IRR — Listing attributes + Room type (NB)",
+  subtitle = "Baseline category for room_type is Entire home/apt",
+  filename = "NB_Kitchen_IRR_Listing_RoomType.png"
+)
+
+# -----------------------
+# 3) Transaction friction & flexibility
+# -----------------------
+terms_3 <- c(
+  "minimum_nights",
+  "instant_bookable1",
+  "extra_people",
+  "guests_included"
+)
+labels_3 <- c(
+  minimum_nights = "minimum_nights",
+  instant_bookable1 = "instant_bookable",
+  extra_people = "extra_people",
+  guests_included = "guests_included"
+)
+plot_kitchen_line(
+  terms = terms_3,
+  labels = labels_3,
+  title = "Kitchen IRR — Transaction friction (NB)",
+  subtitle = "Booking constraints vs pricing add-ons",
+  filename = "NB_Kitchen_IRR_Transaction.png"
+)
+
+# -----------------------
+# 4) Host professionalism + Ratings (robust to factor dummy naming)
+# -----------------------
+
+coef_names <- names(b_kitchen)
+
+# helper: get the dummy term for a factor variable (everything that starts with varname)
+get_factor_dummy <- function(varname, pool) {
+  hits <- pool[grepl(paste0("^", varname), pool)]
+  # remove the bare varname if it exists (rare)
+  hits <- hits[hits != varname]
+  if (length(hits) == 0) return(NA_character_)
+  hits[1]  # take first (binary factor should only have one)
+}
+
+t_superhost <- get_factor_dummy("host_is_superhost", coef_names)
+t_verified  <- get_factor_dummy("host_identity_verified", coef_names)
+
+terms_host_rating <- c(
+  t_superhost,
+  "host_response_rate",
+  "host_acceptance_rate",
+  t_verified,
+  "host_response_time_ord",
+  "log_host_listings_count",
+  "review_scores_rating"
+)
+
+# keep only terms that exist in the model
+terms_host_rating <- terms_host_rating[terms_host_rating %in% coef_names]
+
+labels_host_rating <- setNames(rep(NA_character_, length(terms_host_rating)), terms_host_rating)
+labels_host_rating[t_superhost] <- "superhost"
+labels_host_rating["host_response_rate"] <- "response_rate"
+labels_host_rating["host_acceptance_rate"] <- "acceptance_rate"
+labels_host_rating[t_verified] <- "identity_verified"
+labels_host_rating["host_response_time_ord"] <- "response_time_ord"
+labels_host_rating["log_host_listings_count"] <- "log_host_listings_count"
+labels_host_rating["review_scores_rating"] <- "rating"
+
+plot_kitchen_line(
+  terms   = terms_host_rating,
+  labels  = labels_host_rating,
+  title   = "Kitchen IRR — Host professionalism + Ratings (NB)",
+  subtitle= "Host capability + perceived quality (factor dummies auto-matched)",
+  filename= "NB_Kitchen_IRR_Host_Rating.png"
+)
+
+# -----------------------
+# Neighbourhood cleansed: mixed effects (Top/Bottom extremes like property type)
+# -----------------------
+nbh <- tibble(
+  term = coef_names,
+  beta = as.numeric(b_kitchen)
+) %>%
+  filter(grepl("^neighbourhood_cleansed", term)) %>%
+  mutate(irr = exp(beta)) %>%
+  arrange(desc(irr))
+
+if (nrow(nbh) > 0) {
+  top_n <- 8  # adjust for slide readability
+  nbh_pick <- bind_rows(
+    nbh %>% slice_head(n = top_n),
+    nbh %>% slice_tail(n = top_n)
+  ) %>%
+    arrange(irr)
+
+  terms_nbh <- nbh_pick$term
+  labels_nbh <- setNames(gsub("^neighbourhood_cleansed", "", terms_nbh), terms_nbh)
+  labels_nbh <- trimws(labels_nbh)
+
+  plot_kitchen_line(
+    terms   = terms_nbh,
+    labels  = labels_nbh,
+    title   = "Kitchen IRR — Neighbourhood effects (extremes vs baseline)",
+    subtitle= "Some areas much higher/lower demand: strong spatial heterogeneity",
+    filename= "NB_Kitchen_IRR_Neighbourhood_TopBottom.png"
+  )
+
+  cat("\nNeighbourhood FE interpretation:\n")
+  cat("Mixed effects: top areas show ~50–150% higher expected review rates,\n")
+  cat("while low areas often show ~20–40% lower rates vs baseline.\n")
+  cat("This supports strong spatial demand heterogeneity.\n\n")
+} else {
+  cat("No neighbourhood_cleansed dummies found in coefficients.\n")
+}
+
+# -----------------------
+# Property type as a line (Top 5 vs Bottom 5 only)
+# -----------------------
+pt <- tibble(
+  term = names(b_kitchen),
+  beta = as.numeric(b_kitchen)
+) %>%
+  filter(grepl("^property_type", term)) %>%
+  mutate(irr = exp(beta)) %>%
+  arrange(desc(irr))
+
+if (nrow(pt) > 0) {
+  top_n <- 5
+  pt_pick <- bind_rows(
+    pt %>% slice_head(n = top_n),
+    pt %>% slice_tail(n = top_n)
+  ) %>%
+    arrange(irr)
+
+  terms_pt <- pt_pick$term
+  labels_pt <- setNames(gsub("^property_type", "", terms_pt), terms_pt)
+  labels_pt <- trimws(labels_pt)
+
+  plot_kitchen_line(
+    terms = terms_pt,
+    labels = labels_pt,
+    title = "Kitchen IRR — Property type (Top/Bottom effects vs Apartment)",
+    subtitle = "Only extremes shown to keep plot readable",
+    filename = "NB_Kitchen_IRR_PropertyType_TopBottom.png"
+  )
+} else {
+  cat("No property_type dummies found in model coefficients.\n")
+}
+
+```
+
+
+```{r}
+# =========================================
+# STEP 8 - NB Ladder IRR Stability (Same Sample)
+# =========================================
+
+cat("\n=========================================\n")
+cat("STEP 8 - NB Ladder IRR Stability (Same Sample)\n")
+cat("=========================================\n")
+
+library(dplyr)
+library(ggplot2)
+library(tibble)
+
+dir_plots <- file.path(out_dir, "plots")
+if (!dir.exists(dir_plots)) dir.create(dir_plots, recursive = TRUE)
+
+# Core drivers for comparison (adjust if needed)
+core_vars <- c(
+  "log_price",
+  "accommodates",
+  "distance_to_center_km",
+  "instant_bookable1",
+  "host_is_superhost1"
+)
+
+# Extract coefficients
+b_t1 <- coef(model_nb_t1)
+b_t2 <- coef(model_nb_t2)
+b_t3 <- coef(model_nb_t3)
+
+get_coef <- function(b, term) {
+  if (term %in% names(b)) as.numeric(b[term]) else NA_real_
+}
+
+# Build ladder IRR table
+df_ladder <- bind_rows(
+  tibble(term = core_vars,
+         beta = sapply(core_vars, function(t) get_coef(b_t1, t)),
+         model = "Table 1"),
+  tibble(term = core_vars,
+         beta = sapply(core_vars, function(t) get_coef(b_t2, t)),
+         model = "Table 2"),
+  tibble(term = core_vars,
+         beta = sapply(core_vars, function(t) get_coef(b_t3, t)),
+         model = "Table 3 (Kitchen)")
+) %>%
+  mutate(
+    irr = exp(beta),
+    label = case_when(
+      term == "log_price" ~ "log_price",
+      term == "accommodates" ~ "accommodates",
+      term == "distance_to_center_km" ~ "distance_to_center_km",
+      term == "instant_bookable1" ~ "instant_bookable",
+      term == "host_is_superhost1" ~ "superhost",
+      TRUE ~ term
+    ),
+    label = factor(label,
+                   levels = c("log_price",
+                              "accommodates",
+                              "distance_to_center_km",
+                              "instant_bookable",
+                              "superhost"))
+  )
+
+# Colors:
+ladder_colors <- c(
+  "Table 1" = "#2C7BB6",          # Blue
+  "Table 2" = "#1A9850",          # Green
+  "Table 3 (Kitchen)" = "#F8766D" # Orange
+)
+
+p_ladder <- ggplot(df_ladder,
+                   aes(x = label, y = irr,
+                       group = model, color = model)) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_point(size = 3, position = position_dodge(width = 0.3), na.rm = TRUE) +
+  geom_line(position = position_dodge(width = 0.3), na.rm = TRUE) +
+  scale_color_manual(values = ladder_colors) +
+  theme_minimal() +
+  labs(
+    title = "NB Ladder Stability (Same Sample)",
+    subtitle = "Structural → +Host → +Rating (Kitchen)",
+    x = NULL,
+    y = "Incidence Rate Ratio (IRR = exp(β))"
+  ) +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1))
+
+plot_file <- file.path(dir_plots, "NB_Ladder_IRR_Stability.png")
+ggsave(plot_file, p_ladder, width = 9, height = 5, dpi = 300)
+
+cat("Saved ladder IRR stability plot to:\n", plot_file, "\n")
+
+# Optional sanity table
+cat("\n--- Ladder IRR Table ---\n")
+print(df_ladder %>% select(model, term, beta, irr))
+```
+
+```{r}
+# STEP 9 - SE Comparison: Standard vs Clustered (Kitchen NB)
+
+library(dplyr)
+library(ggplot2)
+library(tibble)
+
+# --- Key drivers only ---
+key_vars <- c(
+  "log_price",
+  "distance_to_center_km",
+  "accommodates",
+  "instant_bookable1",
+  "host_is_superhost1",
+  "host_acceptance_rate",
+  "minimum_nights"
+)
+
+# Extract standard SE
+se_std <- summary(model_nb_t3)$coefficients[, "Std. Error"]
+
+# Extract clustered SE
+se_cluster <- robust_nb(model_nb_t3, df_nb_cc$host_id)[, "Std. Error"]
+
+# Helper to safely extract SE
+get_se <- function(se_vec, term) {
+  if (term %in% names(se_vec)) as.numeric(se_vec[term]) else NA_real_
+}
+
+# Build dataset
+df_se <- bind_rows(
+  tibble(
+    term = key_vars,
+    se = sapply(key_vars, function(t) get_se(se_std, t)),
+    type = "Standard SE"
+  ),
+  tibble(
+    term = key_vars,
+    se = sapply(key_vars, function(t) get_se(se_cluster, t)),
+    type = "Clustered SE"
+  )
+) %>%
+  mutate(
+    term = factor(term, levels = key_vars)
+  )
+
+# Plot
+p_se_compare <- ggplot(df_se, aes(x = term, y = se, group = type, color = type)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  theme_minimal() +
+  scale_color_manual(values = c(
+    "Standard SE" = "#1ABC9C",   # Tosca
+    "Clustered SE" = "#F8766D"   # Orange
+  )) +
+  labs(
+    title = "Standard vs Clustered Standard Errors (Kitchen NB)",
+    subtitle = "Host-level clustering",
+    x = NULL,
+    y = "Standard Error"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 20, hjust = 1),
+    legend.title = element_blank()
+  )
+
+# Save
+plot_file <- file.path(dir_plots, "NB_SE_Comparison_Kitchen.png")
+ggsave(plot_file, p_se_compare, width = 9, height = 5, dpi = 300)
+
+cat("Saved SE comparison plot to:\n", plot_file, "\n")
+```

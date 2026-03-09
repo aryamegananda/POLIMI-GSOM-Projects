@@ -1,0 +1,173 @@
+---
+title: "03_OLS_modeling"
+output: html_document
+---
+
+```{r}
+# STEP 0 - Output setup
+out_dir <- "../output/OLS"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+out_file <- file.path(out_dir, "summary.txt")
+
+```
+
+```{r}
+# STEP 1 - Clean Data Loading 
+
+# 1.1 Load data
+df_clean <- read.csv("../data/processed/listings_cleaned.csv",
+                     stringsAsFactors = FALSE)
+
+# 1.2 Convert relevant variables to factor
+df_clean$room_type <- as.factor(df_clean$room_type)
+df_clean$property_type <- as.factor(df_clean$property_type)
+df_clean$property_type <- relevel(df_clean$property_type, ref = "Apartment")
+df_clean$neighbourhood_cleansed <- as.factor(df_clean$neighbourhood_cleansed)
+df_clean$instant_bookable <- as.factor(df_clean$instant_bookable)
+df_clean$cancellation_policy <- as.factor(df_clean$cancellation_policy)
+df_clean$host_is_superhost <- as.factor(df_clean$host_is_superhost)
+df_clean$host_identity_verified <- as.factor(df_clean$host_identity_verified)
+
+# 1.3 Lump rare property_type levels
+prop_counts <- table(df_clean$property_type)
+
+rare_levels <- names(prop_counts[prop_counts < 20])
+
+df_clean <- df_clean %>%
+  mutate(
+    property_type = ifelse(property_type %in% rare_levels,
+                           "Other",
+                           property_type),
+    property_type = as.factor(property_type)
+  )
+
+```
+
+```{r}
+# STEP 2 - OLS: Kitchen Sink Model (Benchmark)
+
+library(sandwich)
+library(lmtest)
+library(car)
+
+sink(out_file)
+cat("=========================================\n")
+cat("OLS Modeling Report\n")
+cat("Generated:", format(Sys.time()), "\n")
+cat("=========================================\n\n")
+
+cat("=========================================\n")
+cat("STEP 1 — Data Check\n")
+cat("=========================================\n")
+cat("Rows:", nrow(df_clean), " | Cols:", ncol(df_clean), "\n\n")
+cat("number_of_reviews summary:\n")
+print(summary(df_clean$number_of_reviews))
+cat("\n\n")
+
+cat("=========================================\n")
+cat("STEP 2 — Kitchen Sink OLS (log1p(Y))\n")
+cat("=========================================\n")
+
+model_kitchen <- lm(
+  log1p(number_of_reviews) ~
+    log_price + extra_people + guests_included +
+    room_type + accommodates + bedrooms + bathrooms + beds +
+    property_type + neighbourhood_cleansed +
+    host_is_superhost + host_response_rate + host_acceptance_rate +
+    host_identity_verified + minimum_nights + instant_bookable +
+    cancellation_policy + review_scores_rating +
+    log_host_listings_count + amenities_count + host_response_time_ord +
+    distance_to_center_km,
+  data = df_clean
+)
+
+cat("\n--- OLS summary (kitchen) ---\n")
+print(summary(model_kitchen))
+
+cat("\n--- Robust SE (HC1) (kitchen) ---\n")
+print(coeftest(model_kitchen, vcov = vcovHC(model_kitchen, type = "HC1")))
+
+```
+
+```{r}
+# STEP 3 - OLS: Clean Model (Reduced Specification)
+
+cat("\n\n=========================================\n")
+cat("STEP 3 — Clean OLS (log1p(Y))\n")
+cat("=========================================\n")
+
+model_clean <- lm(
+  log1p(number_of_reviews) ~
+    log_price + accommodates + room_type + property_type +
+    distance_to_center_km + neighbourhood_cleansed +
+    amenities_count + minimum_nights + instant_bookable +
+    host_is_superhost + host_response_rate + 
+    log_host_listings_count,
+  data = df_clean
+)
+
+cat("\n--- OLS summary (clean) ---\n")
+print(summary(model_clean))
+
+cat("\n--- Robust SE (HC1) (clean) ---\n")
+print(coeftest(model_clean, vcov = vcovHC(model_clean, type = "HC1")))
+
+```
+
+```{r}
+# STEP 4 - Comparison & Diagnostics
+
+cat("\n\n=========================================\n")
+cat("STEP 4 — Comparison & Diagnostics\n")
+cat("=========================================\n")
+
+# ---------------------------------------------------------
+# 4.1 Same-sample comparison (use kitchen's estimation sample)
+# ---------------------------------------------------------
+
+# Build same-sample dataset for BOTH models
+vars_needed <- unique(c(
+  all.vars(formula(model_kitchen)),
+  all.vars(formula(model_clean))
+))
+
+df_same_sample <- df_clean %>%
+  dplyr::select(dplyr::all_of(vars_needed)) %>%
+  na.omit()
+
+model_kitchen_same_sample <- lm(formula(model_kitchen), data = df_same_sample)
+model_clean_same_sample   <- lm(formula(model_clean),   data = df_same_sample)
+
+cat("\n--- Same-sample fit comparison ---\n")
+cat("Adj R^2 (kitchen):", summary(model_kitchen)$adj.r.squared, "\n")
+cat("Adj R^2 (clean, same sample):", summary(model_clean_same_sample)$adj.r.squared, "\n\n")
+
+cat("log_price (kitchen):", coef(model_kitchen)["log_price"], "\n")
+cat("log_price (clean, same sample):", coef(model_clean_same_sample)["log_price"], "\n\n")
+
+cat("--- AIC / BIC (same sample) ---\n")
+print(AIC(model_kitchen, model_clean_same_sample))
+print(BIC(model_kitchen, model_clean_same_sample))
+
+cat("\n--- Block significance test (partial F-test) ---\n")
+print(anova(model_clean_same_sample, model_kitchen))
+
+cat("\n--- VIF (kitchen) ---\n")
+print(vif(model_kitchen))
+
+# Close sink for the report
+while (sink.number() > 0) sink()
+
+# =========================================================
+# STEP 5 - Residual diagnostics plots
+# =========================================================
+png(
+  filename = file.path(out_dir, "residual_plots_kitchen.png"),
+  width = 1200, height = 900
+)
+par(mfrow = c(2, 2))
+plot(model_kitchen)
+dev.off()
+
+```

@@ -1,0 +1,315 @@
+---
+title: "01_data_cleaning"
+output: html_document
+---
+
+```{r}
+# STEP 1 - Raw Data Loading 
+
+# 1.1 Load
+listings <- read.csv("../data/raw/listings.csv")
+
+# Output folder structure
+root_out <- "../output"
+
+dir_datainspect <- file.path(root_out, "datainspection")
+dir_desc        <- file.path(root_out, "descriptive")
+dir_desc_y      <- file.path(dir_desc, "Y_variables")
+dir_desc_x      <- file.path(dir_desc, "X_variables")
+dir_desc_xy     <- file.path(dir_desc, "XY_correlation")
+
+dirs <- c(dir_datainspect, dir_desc, dir_desc_y, dir_desc_x, dir_desc_xy)
+
+for (d in dirs) {
+  if (!dir.exists(d)) dir.create(d, recursive = TRUE)
+}
+```
+
+```{r}
+# STEP 2 - Raw Data Inspection
+# Always close any leftover sinks
+while (sink.number() > 0) sink()
+
+# Save directly into output/datainspection
+output_file <- file.path(dir_datainspect, "Raw_Data_Inspection.txt")
+
+sink(output_file)
+
+cat("====================================\n")
+cat("RAW DATA INSPECTION\n")
+cat("====================================\n\n")
+
+# 2.1 Inspect dimension
+cat("2.1 Dataset Dimensions:\n")
+print(dim(listings))
+cat("\n------------------------------------\n\n")
+
+# 2.2 Inspect column names
+cat("2.2 Column Names:\n")
+print(names(listings))
+cat("\n------------------------------------\n\n")
+
+# 2.3 Inspect data types
+cat("2.3 Data Types:\n")
+print(sapply(listings, class))
+cat("\n------------------------------------\n\n")
+
+# 2.4 Inspect missing values
+cat("2.4 Missing Values (per column):\n")
+print(colSums(is.na(listings)))
+cat("\n------------------------------------\n\n")
+
+# 2.5 Inspect duplicate rows
+cat("2.5 Duplicate Rows:\n")
+print(sum(duplicated(listings)))
+cat("\n------------------------------------\n\n")
+
+cat("END OF RAW DATA INSPECTION\n")
+cat("====================================\n")
+
+sink()
+
+```
+
+```{r}
+# STEP 3 - Data Cleaning
+
+library(dplyr)
+library(stringr)
+
+# -------------------------------------------------
+# 3.1 Select modeling variables
+# -------------------------------------------------
+
+df <- listings %>%
+  select(
+    id, host_id,
+    price, extra_people, guests_included,
+    room_type, accommodates, bedrooms, bathrooms, beds, property_type, amenities,
+    neighbourhood_cleansed,
+    latitude, longitude,
+    host_is_superhost, host_response_time, host_response_rate, host_acceptance_rate,
+    host_identity_verified, host_listings_count,
+    minimum_nights, instant_bookable, cancellation_policy,
+    review_scores_rating,
+    number_of_reviews,
+    host_since, last_scraped
+  )
+
+# -------------------------------------------------
+# 3.2 Convert variable values
+# -------------------------------------------------
+
+# 1) Monetary variables → numeric
+df <- df %>%
+  mutate(
+    price = as.numeric(str_remove_all(price, "[$,]")),
+    extra_people = as.numeric(str_remove_all(extra_people, "[$,]"))
+  )
+
+# 2) Percentage variables → numeric
+df <- df %>%
+  mutate(
+    host_response_rate = str_trim(host_response_rate),
+    host_acceptance_rate = str_trim(host_acceptance_rate),
+
+    host_response_rate = ifelse(host_response_rate %in% c("N/A", "", "NA"),
+                                NA, host_response_rate),
+    host_acceptance_rate = ifelse(host_acceptance_rate %in% c("N/A", "", "NA"),
+                                  NA, host_acceptance_rate),
+
+    host_response_rate = as.numeric(str_remove(host_response_rate, "%")),
+    host_acceptance_rate = as.numeric(str_remove(host_acceptance_rate, "%"))
+  )
+
+# 3) Structural numeric variables
+df <- df %>%
+  mutate(
+    guests_included = as.numeric(guests_included),
+    accommodates = as.numeric(accommodates),
+    bedrooms = as.numeric(bedrooms),
+    bathrooms = as.numeric(bathrooms),
+    host_listings_count = as.numeric(host_listings_count),
+    minimum_nights = as.numeric(minimum_nights),
+    review_scores_rating = as.numeric(review_scores_rating),
+    number_of_reviews = as.numeric(number_of_reviews)
+  )
+
+# 4) Date variables
+df <- df %>%
+  mutate(
+    host_since  = as.Date(host_since),
+    last_scraped = as.Date(last_scraped)
+  )
+
+# 5) Binary variables → 1/0
+binary_map <- function(x) {
+  x <- tolower(trimws(as.character(x)))
+  ifelse(x %in% c("t", "yes", "true", "1"), 1,
+         ifelse(x %in% c("f", "no", "false", "0"), 0, NA))
+}
+
+df <- df %>%
+  mutate(
+    host_is_superhost = binary_map(host_is_superhost),
+    host_identity_verified = binary_map(host_identity_verified),
+    instant_bookable = binary_map(instant_bookable)
+  )
+
+# -------------------------------------------------
+# 3.3 Feature engineering
+# -------------------------------------------------
+
+# 3.3.1 Log price (keep only valid positive values)
+df <- df %>%
+  filter(!is.na(price) & price > 0) %>%
+  mutate(log_price = log(price)) %>%
+  select(-price)
+
+# 3.3.2 Log host listings count
+df <- df %>%
+  mutate(log_host_listings_count = log(1 + host_listings_count)) %>%
+  select(-host_listings_count)
+
+# 3.3.3 Cap minimum_nights at 30
+df <- df %>%
+  mutate(minimum_nights = ifelse(minimum_nights > 30, 30, minimum_nights))
+
+# 3.3.4 Amenities count
+df <- df %>%
+  mutate(
+    amenities_count = ifelse(
+      is.na(amenities),
+      0,
+      str_count(amenities, '"') / 2
+    )
+  ) %>%
+  select(-amenities)
+
+# 3.3.5 Host response time → ordinal scale
+df <- df %>%
+  mutate(
+    host_response_time = tolower(trimws(host_response_time)),
+    host_response_time_ord = case_when(
+      host_response_time == "within an hour" ~ 4,
+      host_response_time == "within a few hours" ~ 3,
+      host_response_time == "within a day" ~ 2,
+      host_response_time == "a few days or more" ~ 1,
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  select(-host_response_time)
+
+# 3.3.6 Distance to city center (Boston Common)
+R <- 6371
+lat2 <- 42.3550 * pi/180
+lon2 <- -71.0656 * pi/180
+
+df <- df %>%
+  mutate(
+    latitude = as.numeric(latitude),
+    longitude = as.numeric(longitude),
+    lat1 = latitude * pi/180,
+    lon1 = longitude * pi/180,
+    dlat = lat2 - lat1,
+    dlon = lon2 - lon1,
+    a = sin(dlat/2)^2 + cos(lat1) * cos(lat2) * sin(dlon/2)^2,
+    distance_to_center_km = 2 * R * asin(sqrt(a))
+  ) %>%
+  select(-latitude, -longitude, -lat1, -lon1, -dlat, -dlon, -a)
+
+# 3.3.7 Exposure (months_active) with guardrails
+df <- df %>%
+  mutate(
+    days_active = as.numeric(difftime(last_scraped, host_since, units = "days")),
+    months_active = days_active / 30.44
+  ) %>%
+  filter(
+    !is.na(host_since),
+    !is.na(last_scraped),
+    !is.na(months_active),
+    is.finite(months_active),
+    months_active >= 1
+  )
+
+# -------------------------------------------------
+# Save cleaned dataset
+# -------------------------------------------------
+
+write.csv(df, "../data/processed/listings_cleaned.csv", row.names = FALSE)
+
+```
+
+```{r}
+# STEP 4 - Clean Data Inspection
+
+# 4.0 Reload cleaned dataset
+df_clean <- read.csv("../data/processed/listings_cleaned.csv", stringsAsFactors = FALSE)
+
+# Always close any leftover sinks
+while (sink.number() > 0) sink()
+
+# Save directly into output/datainspection
+output_file <- file.path(dir_datainspect, "Clean_Data_Inspection.txt")
+sink(output_file)
+
+cat("====================================\n")
+cat("CLEAN DATA INSPECTION\n")
+cat("====================================\n\n")
+
+# 4.1 Dimensions
+cat("4.1 Dataset Dimensions:\n")
+print(dim(df_clean))
+cat("\n------------------------------------\n\n")
+
+# 4.2 Column names
+cat("4.2 Column Names:\n")
+print(names(df_clean))
+cat("\n------------------------------------\n\n")
+
+# 4.3 Data types
+cat("4.3 Data Types:\n")
+print(sapply(df_clean, class))
+cat("\n------------------------------------\n\n")
+
+# 4.4 Missing values
+cat("4.4 Missing Values (count + %):\n")
+missing_count <- colSums(is.na(df_clean))
+missing_pct <- round((missing_count / nrow(df_clean)) * 100, 2)
+
+missing_summary <- data.frame(
+  missing_count = missing_count,
+  missing_pct = missing_pct
+)
+
+# Show only columns with missing values
+print(missing_summary[missing_summary$missing_count > 0, ])
+cat("\n------------------------------------\n\n")
+
+# 4.5 Duplicated rows
+cat("4.5 Duplicated Rows:\n")
+print(sum(duplicated(df_clean)))
+cat("\n------------------------------------\n\n")
+
+# 4.6 Quick summaries (key variables for the project)
+cat("4.6 Summary: number_of_reviews (Y)\n")
+print(summary(df_clean$number_of_reviews))
+cat("\n")
+
+cat("4.6 Summary: months_active (exposure)\n")
+print(summary(df_clean$months_active))
+cat("\n")
+
+cat("4.6 Summary: log_price\n")
+print(summary(df_clean$log_price))
+cat("\n")
+
+cat("4.6 Summary: amenities_count\n")
+print(summary(df_clean$amenities_count))
+cat("\n------------------------------------\n\n")
+
+cat("END OF CLEAN DATA INSPECTION\n")
+cat("====================================\n")
+
+sink()
+```
