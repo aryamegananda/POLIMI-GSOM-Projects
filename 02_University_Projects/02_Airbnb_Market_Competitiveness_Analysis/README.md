@@ -19,7 +19,7 @@ The dataset contains detailed information on Airbnb listings in Boston, includin
 - Poisson regression for baseline count modeling
 - Negative Binomial regression to address overdispersion
 - Cluster-robust standard errors to account for host-level correlation
-## Model diagnostics including:
+### Model diagnostics including:
 - Pearson dispersion tests
 - Likelihood Ratio Tests (LRT)
 - AIC model comparison
