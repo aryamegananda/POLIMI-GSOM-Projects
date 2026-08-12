@@ -9,7 +9,7 @@ A stock screening dashboard built to help me evaluate and track my investment po
 - **Financial Statements** — Quarterly income statement with Y/Y change
 - **Signal Scoring** — Rule-based scoring engine that rates each stock from -7 to +7
 - **Portfolio Tracker** — Monitor portfolio health with an aggregated score
-- **News Feed** — Coming soon
+- **News Feed** — Fetch current news for selected stocks
 
 ## Tech Stack
 

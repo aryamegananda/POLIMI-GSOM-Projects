@@ -2,6 +2,8 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import requests
+from bs4 import BeautifulSoup as bs
 
 # 1. Title
 st.set_page_config(layout="wide", page_title="Stock Buddy")
@@ -75,13 +77,34 @@ def calc_technical_score(df):
         score -= 2
     if latest["Close"] > latest["SMA_20"]:
         score += 1
-    elif latest["Close"] > latest["SMA_50"]:
+    else:
+        score -= 1
+    if latest["Close"] > latest["SMA_50"]:
         score += 1
+    else:
+        score -= 1
     if latest["Volatility"] < 0.03:
         score += 1
     elif latest["Volatility"] > 0.06:
         score -= 1
     return score
+
+def get_news(ticker):
+    url = f"https://finviz.com/quote.ashx?t={ticker}"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    response = requests.get(url, headers=headers)
+    soup = bs(response.text, "html.parser")
+
+    headlines = soup.find_all("a", class_= "tab-link-news")
+
+    news = []
+    for h in headlines[:10]:
+        news.append({
+            "title":h.text.strip(),
+            "link":h.get("href")
+        })
+
+    return news
 
 
 # 5. Sidebar
@@ -202,4 +225,8 @@ elif page == "Technical":
 elif page == "News":
     selected = st.sidebar.selectbox("Select a stock", tickers)
     st.subheader(f"{selected} - News")
-    st.write("coming soon.")
+
+    news = get_news(selected)
+
+    for article in news:
+        st.markdown(f"[{article['title']}]({article['link']})")
