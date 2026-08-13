@@ -187,6 +187,51 @@ elif page == "Financials":
     selected = st.sidebar.selectbox("Select a stock", tickers)
     st.subheader(f"{selected} - Financials")
 
+    tab1, tab2, tab3 = st.tabs(["Income Statement", "Balance Sheet", "Cash Flow"])
+
+    with tab1:
+        st.subheader("Income Statement")
+        fin = yf.Ticker(selected).quarterly_financials
+        
+        if len(fin.columns) >= 5:
+            latest_q = fin.columns[0]
+            year_ago = fin.columns[4]
+
+            items = {
+                "Revenue": "Total Revenue",
+                "COGS": "Cost Of Revenue",
+                "Gross Profit": "Gross Profit",
+                "SG&A": "Selling General and Administration",
+                "EBITDA": "Normalized EBITDA",
+                "D&A": "Reconciled Depreciation",
+                "EBT": "Pretax Income",
+                "Taxes": "Tax Provision",
+                "Net Income": "Net Income"
+            }
+
+            rows = []
+            for label, row_name in items.items():
+                if row_name in fin.index:
+                    val = fin.loc[row_name, latest_q]
+                    val_ago = fin.loc[row_name, year_ago]
+                    yoy = (val - val_ago) / val_ago
+                    rows.append({"Item": label, "Value": f"{val/1e9:.2f}B", "Y/Y Change": f"{yoy:.1%}"})
+                else:
+                    rows.append({"Item": label, "Value": "N/A", "Y/Y Change": "N/A"})
+
+            st.table(pd.DataFrame(rows))
+
+        else:
+            st.write("Not enough quarterly data avaliable.")
+
+    with tab2:
+        st.subheader("Balance Sheet")
+        st.write("coming soong")
+
+    with tab3:
+        st.subheader("Cash Flow")
+        st.write("coming soon")
+
 elif page == "Technical":
     selected = st.sidebar.selectbox("Select a stock", tickers)
     st.subheader(f"{selected} - Key Technical Analysis")
