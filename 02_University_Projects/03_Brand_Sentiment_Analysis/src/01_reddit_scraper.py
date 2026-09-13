@@ -6,10 +6,10 @@ import pandas as pd
 # 1. Define source variables and config variables
 sources = [
     ("revolut", None),
-    ("fintech", "revolut"),
-    ("personalfinance", "revolut"),
-    ("UKPersonalFinance", "revolut"),
-    ("eupersonalfinance", "revolut"),
+    ("Revolut_EU", None),
+    ("neobanks", "revolut"),
+    ("banking", "revolut"),
+    ("CryptoCurrency", "revolut"),
 ]
 
 headers = {
@@ -19,37 +19,59 @@ all_posts = []
 
 # 2. Scrape
 for sub, query in sources:
-    if query is None:
-        base_url = f"https://arctic-shift.photon-reddit.com/api/posts/search?subreddit={sub}&limit=100"
-    else:
-        base_url = f"https://arctic-shift.photon-reddit.com/api/posts/search?query={query}&subreddit={sub}&limit=100"
+    before = None
 
-    response = requests.get(base_url, headers=headers)
+    # 2b. Cap the page
+    page = 0
 
-    if response.status_code != 200:
-        print(f"Error {response.status_code} on r/{sub}")
-        continue
+    # 2c. 
+    while True:
+        page += 1
+        if page > 40:
+            break
 
-    try:
-        data = response.json()
-    except Exception as e:
-        print(f"Bad response from r/{sub}: {e}")
-        continue
+        if query is None:
+            base_url = f"https://arctic-shift.photon-reddit.com/api/posts/search?subreddit={sub}&limit=100"
+        else:
+            base_url = f"https://arctic-shift.photon-reddit.com/api/posts/search?query={query}&subreddit={sub}&limit=100"
 
-    posts = data["data"]
-    for p in posts:
-        all_posts.append({
-            "id": p["id"],
-            "title": p.get("title", ""),
-            "text": p.get("selftext", ""),
-            "score": p.get("score", 0),
-            "num_comments": p.get("num_comments", 0),
-            "created_utc": p.get("created_utc", ""),
-            "author": p.get("author", ""),
-            "subreddit": p.get("subreddit", sub),
-        })
+        if before:
+            url = f"{base_url}&before={before}"
+        else:
+            url = base_url
 
-    time.sleep(2)
+        response = requests.get(url, headers=headers)
+
+        if response.status_code != 200:
+            print(f"Error {response.status_code} on r/{sub}")
+            break
+
+        try:
+            data = response.json()
+        except Exception as e:
+            print(f"Bad response from r/{sub}: {e}")
+            break
+
+        posts = data["data"]
+
+        if not posts:
+            break
+
+        for p in posts:
+            all_posts.append({
+                "id": p["id"],
+                "title": p.get("title", ""),
+                "text": p.get("selftext", ""),
+                "score": p.get("score", 0),
+                "num_comments": p.get("num_comments", 0),
+                "created_utc": p.get("created_utc", ""),
+                "author": p.get("author", ""),
+                "subreddit": p.get("subreddit", sub),
+            })
+
+        print(f" r/{sub}: fetched {len(posts)} posts (total: {len(all_posts)})")
+        before = posts[-1]["created_utc"]
+        time.sleep(2)
 
 
 print(f"Total posts collected: {len(all_posts)}")
