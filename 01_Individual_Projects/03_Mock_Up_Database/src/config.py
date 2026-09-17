@@ -11,7 +11,7 @@ DB_CONFIG = {
 }
 
 # 2. SQL Alchemy connection string
-DB_URL = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['passowrd']}@{DB_CONFIG['host']:{DB_CONFIG['port']}/{DB_CONFIG['database']}}"
+DB_URL = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
 
 # 3. File path
 RAW_DATA_DIR = "data/raw"
