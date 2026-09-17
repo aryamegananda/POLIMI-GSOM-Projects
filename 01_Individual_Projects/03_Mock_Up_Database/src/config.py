@@ -1,5 +1,9 @@
 # 0. Import
 import os
+from dotenv import load_dotenv
+from pathlib import Path
+
+load_dotenv(Path(__file__).parents[1] / ".env")
 
 # 1. Define connection
 DB_CONFIG = {
