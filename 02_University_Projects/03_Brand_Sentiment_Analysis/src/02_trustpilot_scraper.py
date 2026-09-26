@@ -6,21 +6,19 @@ from selenium.webdriver.common.by import By
 import time
 
 url = "https://www.trustpilot.com/review/www.revolut.com"
-# headers = {
-#     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-# }
-
-# response = requests.get(url, headers=headers)
-
-# print(response.status_code)
-# print(response.text[:500])
-
-# soup = BeautifulSoup(response.text, "html.parser")
-# script = soup.find("script", id="__NEXT_DATA__")
-# data = json.loads(script.text)
-
-# print(response.status_code)
 
 driver = webdriver.Chrome()
 driver.get(url)
-time.sleep(30)
+time.sleep(10)
+
+html = driver.page_source
+print("__NEXT_DATA__" in html)
+
+soup = BeautifulSoup(html, "html.parser")
+script = soup.find("script", id="__NEXT_DATA__")
+data = json.loads(script.text)
+reviews = data["props"]["pageProps"]["reviews"]
+print(type(reviews))
+print(len(reviews))
+
+driver.quit()
