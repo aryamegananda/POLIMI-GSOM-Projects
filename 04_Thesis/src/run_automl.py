@@ -15,7 +15,7 @@ SEED = 42
 PIPELINE = "full_auto_automl"
 RESULTS_FILE = "results/automl_results.csv"
 MODELS_DIR = "models/automl"
-DELETE_MODELS_AFTER_RUN = True   # best_quality models are large; set False to keep them
+DELETE_MODELS_AFTER_RUN = True
 
 AG_FIT_ARGS = {
     "presets": "best_quality",
@@ -138,5 +138,6 @@ def main():
     print(f"\nDone. Results in {RESULTS_FILE}")
 
 
+# 4. Run
 if __name__ == "__main__":
     main()
