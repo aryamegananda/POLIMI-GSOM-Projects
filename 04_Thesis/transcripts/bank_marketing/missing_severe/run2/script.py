@@ -1,0 +1,80 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+SEED = 42
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["y"].astype(int).values
+X = train.drop(columns=["y"])
+Xt = test[X.columns].copy()
+
+cat_cols = [c for c in X.columns if X[c].dtype == "object"]
+num_cols = [c for c in X.columns if c not in cat_cols]
+
+def fe(df):
+    df = df.copy()
+    df["pdays_missing"] = (df["pdays"] == 999).astype(float)
+    df.loc[df["pdays"].isna(), "pdays_missing"] = np.nan
+    df["dur_log"] = np.log1p(df["duration"])
+    df["dur_per_campaign"] = df["duration"] / df["campaign"]
+    df["rate_x_euribor"] = df["euribor3m"] * df["nr.employed"]
+    return df
+
+X = fe(X)
+Xt = fe(Xt)
+num_cols = [c for c in X.columns if c not in cat_cols]
+
+# LightGBM frame (category dtype)
+def lgb_frame(df, ref):
+    d = df.copy()
+    for c in cat_cols:
+        d[c] = pd.Categorical(d[c], categories=sorted(ref[c].astype(str).unique()))
+    return d
+
+Xl, Xtl = lgb_frame(X, X), lgb_frame(Xt, X)
+
+# CatBoost frame
+Xc, Xtc = X.copy(), Xt.copy()
+for c in cat_cols:
+    Xc[c] = Xc[c].astype(str)
+    Xtc[c] = Xtc[c].astype(str)
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+oof_l = np.zeros(len(X)); oof_c = np.zeros(len(X))
+pt_l = np.zeros(len(Xt)); pt_c = np.zeros(len(Xt))
+
+lgb_params = dict(n_estimators=2000, learning_rate=0.02, num_leaves=15, min_child_samples=30,
+                  subsample=0.8, subsample_freq=1, colsample_bytree=0.7, reg_lambda=5.0,
+                  random_state=SEED, verbose=-1, n_jobs=-1)
+
+for tr, va in skf.split(X, y):
+    m = lgb.LGBMClassifier(**lgb_params)
+    m.fit(Xl.iloc[tr], y[tr], eval_set=[(Xl.iloc[va], y[va])],
+          callbacks=[lgb.early_stopping(100, verbose=False)])
+    oof_l[va] = m.predict_proba(Xl.iloc[va])[:, 1]
+    pt_l += m.predict_proba(Xtl)[:, 1] / skf.n_splits
+
+    cb = CatBoostClassifier(iterations=1500, learning_rate=0.04, depth=6, random_seed=SEED,
+                            verbose=0, cat_features=cat_cols, early_stopping_rounds=100,
+                            thread_count=-1)
+    cb.fit(Xc.iloc[tr], y[tr], eval_set=(Xc.iloc[va], y[va]))
+    oof_c[va] = cb.predict_proba(Xc.iloc[va])[:, 1]
+    pt_c += cb.predict_proba(Xtc)[:, 1] / skf.n_splits
+
+oof = 0.5 * oof_l + 0.5 * oof_c
+pt = 0.5 * pt_l + 0.5 * pt_c
+
+best_t, best_f = 0.5, -1
+for t in np.arange(0.1, 0.8, 0.01):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "oof F1", best_f)
+
+out = pd.DataFrame({"proba": np.clip(pt, 0, 1), "label": (pt >= best_t).astype(int)})
+out.to_csv("predictions.csv", index=False)

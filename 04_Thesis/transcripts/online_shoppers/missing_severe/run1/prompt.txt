@@ -1,0 +1,89 @@
+You are a data scientist. Build a complete machine learning pipeline for a
+binary classification task.
+
+## Task
+Predict the target column "Revenue" (1 = positive class, 0 = negative class).
+Your pipeline will be evaluated on the F1 score of the positive class on a
+held-out test set, so optimize for F1.
+
+## Files (in the current working directory)
+- train.csv          : training data, including the target column "Revenue"
+- test_features.csv  : test data, same columns but WITHOUT the target
+
+## Data profile (training data)
+Rows: 9864, Columns: 18
+
+Columns (type, missing %):
+- Administrative: float64, 20.0% missing
+- Administrative_Duration: float64, 20.0% missing
+- Informational: float64, 20.0% missing
+- Informational_Duration: float64, 20.0% missing
+- ProductRelated: float64, 20.0% missing
+- ProductRelated_Duration: float64, 20.0% missing
+- BounceRates: float64, 20.0% missing
+- ExitRates: float64, 20.0% missing
+- PageValues: float64, 20.0% missing
+- SpecialDay: float64, 20.0% missing
+- Month: object, 0.0% missing
+- OperatingSystems: float64, 20.0% missing
+- Browser: float64, 20.0% missing
+- Region: float64, 20.0% missing
+- TrafficType: float64, 20.0% missing
+- VisitorType: object, 0.0% missing
+- Weekend: bool, 0.0% missing
+- Revenue: int64, 0.0% missing
+
+Numeric summary:
+                          count      mean       std  min      25%      50%       75%        max
+Administrative           7891.0     2.322     3.310  0.0    0.000    1.000     4.000     27.000
+Administrative_Duration  7891.0    81.109   178.760  0.0    0.000    7.625    93.550   3398.750
+Informational            7891.0     0.508     1.252  0.0    0.000    0.000     0.000     16.000
+Informational_Duration   7891.0    33.692   135.507  0.0    0.000    0.000     0.000   2549.375
+ProductRelated           7891.0    31.284    41.875  0.0    7.000   18.000    38.000    584.000
+ProductRelated_Duration  7891.0  1185.093  1863.846  0.0  181.833  605.886  1481.606  63973.522
+BounceRates              7891.0     0.022     0.049  0.0    0.000    0.003     0.017      0.200
+ExitRates                7891.0     0.043     0.049  0.0    0.014    0.026     0.050      0.200
+PageValues               7891.0     5.969    18.808  0.0    0.000    0.000     0.000    361.764
+SpecialDay               7891.0     0.062     0.201  0.0    0.000    0.000     0.000      1.000
+OperatingSystems         7891.0     2.129     0.930  1.0    2.000    2.000     3.000      8.000
+Browser                  7891.0     2.366     1.738  1.0    2.000    2.000     2.000     13.000
+Region                   7891.0     3.148     2.390  1.0    1.000    3.000     4.000      9.000
+TrafficType              7891.0     4.034     3.999  1.0    2.000    2.000     4.000     20.000
+Revenue                  9864.0     0.155     0.362  0.0    0.000    0.000     0.000      1.000
+
+Text/boolean columns (most common values):
+- Month: May (2703), Nov (2360), Mar (1538), Dec (1391), Oct (444)
+- VisitorType: Returning_Visitor (8443), New_Visitor (1347), Other (74)
+- Weekend: False (7578), True (2286)
+
+Target class balance:
+- 0: 84.5%
+- 1: 15.5%
+
+First 5 rows:
+   Administrative  Administrative_Duration  Informational  Informational_Duration  ProductRelated  ProductRelated_Duration  BounceRates  ExitRates  PageValues  SpecialDay Month  OperatingSystems  Browser  Region  TrafficType        VisitorType  Weekend  Revenue
+0             8.0                   732.25            0.0                     0.0            34.0              1345.755952     0.005128   0.013342   12.274195         0.8   May               3.0      3.0     3.0          2.0  Returning_Visitor    False        0
+1             NaN                      NaN            NaN                     NaN             NaN                      NaN          NaN        NaN         NaN         NaN   Oct               NaN      NaN     NaN          NaN  Returning_Visitor     True        0
+2             0.0                     0.00            0.0                     0.0             4.0                42.000000     0.000000   0.050000    0.000000         0.0   Dec               2.0     10.0     1.0          2.0  Returning_Visitor    False        0
+3             NaN                      NaN            NaN                     NaN             NaN                      NaN          NaN        NaN         NaN         NaN   May               NaN      NaN     NaN          NaN  Returning_Visitor    False        1
+4             NaN                      NaN            NaN                     NaN             NaN                      NaN          NaN        NaN         NaN         NaN   Mar               NaN      NaN     NaN          NaN  Returning_Visitor    False        1
+
+## Your job
+Write ONE complete Python script that:
+1. Loads train.csv and test_features.csv
+2. Prepares the data as you see fit
+3. Trains a model on the training data
+4. Predicts the test rows and saves predictions.csv with exactly these columns:
+   - "proba": predicted probability of the positive class (between 0 and 1)
+   - "label": predicted class (0 or 1)
+   in the same row order as test_features.csv
+
+## Constraints
+- Python 3, using only: pandas, numpy, scikit-learn, scipy, lightgbm, xgboost, catboost
+- Do not use AutoML frameworks
+- No internet access; do not download anything
+- Use random_state=42 wherever randomness is involved
+- The script must finish within 15 minutes on a laptop CPU
+- This is a single attempt: you will not see any output or errors
+
+Return only the Python script, in a single ```python code block.

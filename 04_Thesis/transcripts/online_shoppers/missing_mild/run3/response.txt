@@ -1,0 +1,96 @@
+```python
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.linear_model import LogisticRegression
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+SEED = 42
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["Revenue"].astype(int).values
+X = train.drop(columns=["Revenue"])
+Xt = test.copy()[X.columns]
+
+num_cols = [c for c in X.columns if c not in ["Month", "VisitorType", "Weekend"]]
+month_map = {"Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "June": 6, "Jun": 6,
+             "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12}
+
+def prep(df):
+    d = df.copy()
+    for c in num_cols:
+        d[c + "_isna"] = d[c].isna().astype(int) if c in ["PageValues", "ExitRates"] else 0
+    d = d.drop(columns=[c for c in d.columns if c.endswith("_isna") and d[c].sum() == 0 and False])
+    d["Month_num"] = d["Month"].map(month_map)
+    d["Weekend"] = d["Weekend"].astype(int)
+    d["VisitorType"] = d["VisitorType"].astype(str)
+    d["TotalPages"] = d[["Administrative", "Informational", "ProductRelated"]].sum(axis=1, min_count=1)
+    d["TotalDur"] = d[["Administrative_Duration", "Informational_Duration", "ProductRelated_Duration"]].sum(axis=1, min_count=1)
+    d["DurPerPage"] = d["ProductRelated_Duration"] / (d["ProductRelated"] + 1)
+    d["PV_log"] = np.log1p(d["PageValues"])
+    d["PV_x_Exit"] = d["PageValues"] * (1 - d["ExitRates"])
+    d["Exit_minus_Bounce"] = d["ExitRates"] - d["BounceRates"]
+    return d
+
+A = prep(X)
+B = prep(Xt)
+
+# Tree-model version (label-encoded categoricals, NaN retained)
+def tree_frame(d):
+    d = d.copy()
+    d["Month"] = d["Month"].astype(str)
+    return d
+
+cat_cols = ["Month", "VisitorType"]
+A_t = tree_frame(A)
+B_t = tree_frame(B)
+for c in cat_cols:
+    cats = pd.Categorical(pd.concat([A_t[c], B_t[c]])).categories
+    A_t[c + "_code"] = pd.Categorical(A_t[c], categories=cats).codes
+    B_t[c + "_code"] = pd.Categorical(B_t[c], categories=cats).codes
+A_l = A_t.drop(columns=cat_cols)
+B_l = B_t.drop(columns=cat_cols)
+
+# CatBoost version
+A_c = A_t.copy()
+B_c = B_t.copy()
+A_c = A_c.drop(columns=[c + "_code" for c in cat_cols])
+B_c = B_c.drop(columns=[c + "_code" for c in cat_cols])
+cat_idx = [A_c.columns.get_loc(c) for c in cat_cols]
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+oof = {"lgb": np.zeros(len(A)), "cb": np.zeros(len(A))}
+pt = {"lgb": np.zeros(len(B)), "cb": np.zeros(len(B))}
+
+lgb_params = dict(n_estimators=400, learning_rate=0.03, num_leaves=15, min_child_samples=30,
+                  subsample=0.8, subsample_freq=1, colsample_bytree=0.7,
+                  reg_lambda=2.0, random_state=SEED, verbose=-1, n_jobs=4)
+
+for tr, va in skf.split(A, y):
+    m = lgb.LGBMClassifier(**lgb_params)
+    m.fit(A_l.iloc[tr], y[tr])
+    oof["lgb"][va] = m.predict_proba(A_l.iloc[va])[:, 1]
+    pt["lgb"] += m.predict_proba(B_l)[:, 1] / 5
+
+    c = CatBoostClassifier(iterations=600, learning_rate=0.04, depth=6, random_seed=SEED,
+                           verbose=0, thread_count=4, cat_features=cat_idx)
+    c.fit(A_c.iloc[tr], y[tr])
+    oof["cb"][va] = c.predict_proba(A_c.iloc[va])[:, 1]
+    pt["cb"] += c.predict_proba(B_c)[:, 1] / 5
+
+oof_p = 0.5 * oof["lgb"] + 0.5 * oof["cb"]
+test_p = 0.5 * pt["lgb"] + 0.5 * pt["cb"]
+
+best_t, best_f = 0.5, -1
+for t in np.arange(0.15, 0.7, 0.01):
+    f = f1_score(y, (oof_p >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+
+out = pd.DataFrame({"proba": np.clip(test_p, 0, 1),
+                    "label": (test_p >= best_t).astype(int)})
+out.to_csv("predictions.csv", index=False)
+```

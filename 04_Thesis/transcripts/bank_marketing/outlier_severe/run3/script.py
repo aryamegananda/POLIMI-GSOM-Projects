@@ -1,0 +1,83 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+import xgboost as xgb
+from catboost import CatBoostClassifier
+
+SEED = 42
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["y"].values
+X_all = pd.concat([train.drop(columns=["y"]), test], axis=0, ignore_index=True)
+
+
+def clean(df):
+    df = df.copy()
+    # fix obviously corrupted negative values
+    df["age"] = df["age"].abs().clip(lower=17)
+    df["duration"] = df["duration"].abs()
+    df["campaign"] = df["campaign"].abs().clip(lower=1)
+    df["pdays_flag"] = (df["pdays"] == 999).astype(int)
+    df["log_duration"] = np.log1p(df["duration"])
+    df["dur_per_campaign"] = df["duration"] / df["campaign"]
+    df["euribor_emp"] = df["euribor3m"] * df["emp.var.rate"]
+    return df
+
+
+X_all = clean(X_all)
+cat_cols = X_all.select_dtypes(include="object").columns.tolist()
+X_all = pd.get_dummies(X_all, columns=cat_cols, dtype=int)
+X_all.columns = [c.replace(".", "_").replace(" ", "_") for c in X_all.columns]
+
+n = len(train)
+X = X_all.iloc[:n].reset_index(drop=True)
+X_test = X_all.iloc[n:].reset_index(drop=True)
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+oof = np.zeros((n, 3))
+tp = np.zeros((len(X_test), 3))
+
+for tr, va in skf.split(X, y):
+    Xtr, Xva = X.iloc[tr], X.iloc[va]
+    ytr, yva = y[tr], y[va]
+
+    m1 = lgb.LGBMClassifier(n_estimators=400, learning_rate=0.03, num_leaves=15,
+                            min_child_samples=30, subsample=0.8, subsample_freq=1,
+                            colsample_bytree=0.7, reg_lambda=2.0,
+                            random_state=SEED, n_jobs=-1, verbose=-1)
+    m1.fit(Xtr, ytr)
+    oof[va, 0] = m1.predict_proba(Xva)[:, 1]
+    tp[:, 0] += m1.predict_proba(X_test)[:, 1] / 5
+
+    m2 = xgb.XGBClassifier(n_estimators=400, learning_rate=0.03, max_depth=4,
+                           subsample=0.8, colsample_bytree=0.7, min_child_weight=3,
+                           reg_lambda=2.0, random_state=SEED, n_jobs=-1,
+                           tree_method="hist", eval_metric="logloss")
+    m2.fit(Xtr, ytr)
+    oof[va, 1] = m2.predict_proba(Xva)[:, 1]
+    tp[:, 1] += m2.predict_proba(X_test)[:, 1] / 5
+
+    m3 = CatBoostClassifier(iterations=600, learning_rate=0.05, depth=6,
+                            random_seed=SEED, verbose=0, thread_count=-1)
+    m3.fit(Xtr, ytr)
+    oof[va, 2] = m3.predict_proba(Xva)[:, 1]
+    tp[:, 2] += m3.predict_proba(X_test)[:, 1] / 5
+
+oof_blend = oof.mean(axis=1)
+test_blend = tp.mean(axis=1)
+
+best_t, best_f = 0.5, -1
+for t in np.arange(0.15, 0.7, 0.005):
+    f = f1_score(y, (oof_blend >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("OOF best F1: %.4f at threshold %.3f" % (best_f, best_t))
+
+out = pd.DataFrame({
+    "proba": np.clip(test_blend, 0, 1),
+    "label": (test_blend >= best_t).astype(int),
+})
+out.to_csv("predictions.csv", index=False)

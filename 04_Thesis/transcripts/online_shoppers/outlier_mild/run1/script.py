@@ -1,0 +1,72 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+import lightgbm as lgb
+
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+months = ["Jan", "Feb", "Mar", "Apr", "May", "June", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+def prep(df):
+    d = df.copy()
+    d["Weekend"] = d["Weekend"].astype(str).str.lower().map({"true": 1, "false": 0}).fillna(0).astype(int)
+    d["MonthNum"] = d["Month"].map({m: i for i, m in enumerate(months)}).fillna(-1)
+    d["Month"] = d["Month"].astype(str)
+    d["VisitorType"] = d["VisitorType"].astype(str)
+    d["TotalPages"] = d["Administrative"] + d["Informational"] + d["ProductRelated"]
+    d["TotalDur"] = d["Administrative_Duration"] + d["Informational_Duration"] + d["ProductRelated_Duration"]
+    d["DurPerPage"] = d["ProductRelated_Duration"] / (d["ProductRelated"].abs() + 1)
+    d["PV_log"] = np.sign(d["PageValues"]) * np.log1p(d["PageValues"].abs())
+    d["PV_pos"] = (d["PageValues"] > 0).astype(int)
+    d["ExitBounce"] = d["ExitRates"] - d["BounceRates"]
+    d["ExitXPV"] = d["ExitRates"] * d["PV_log"]
+    return d
+
+full = pd.concat([train.drop(columns="Revenue"), test], axis=0, ignore_index=True)
+full = prep(full)
+full = pd.get_dummies(full, columns=["Month", "VisitorType"], dtype=int)
+X = full.iloc[:len(train)].reset_index(drop=True)
+Xt = full.iloc[len(train):].reset_index(drop=True)
+y = train["Revenue"].values
+
+def models():
+    return {
+        "lgb": lgb.LGBMClassifier(n_estimators=300, learning_rate=0.02, num_leaves=15,
+                                  min_child_samples=30, subsample=0.8, subsample_freq=1,
+                                  colsample_bytree=0.7, reg_lambda=5, random_state=42,
+                                  verbose=-1, n_jobs=-1),
+        "hgb": HistGradientBoostingClassifier(learning_rate=0.03, max_iter=250, max_leaf_nodes=15,
+                                              min_samples_leaf=30, l2_regularization=5,
+                                              random_state=42),
+        "lr": make_pipeline(StandardScaler(), LogisticRegression(C=0.3, max_iter=2000, random_state=42)),
+    }
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+oof = {k: np.zeros(len(X)) for k in models()}
+for tr, va in skf.split(X, y):
+    for k, m in models().items():
+        m.fit(X.iloc[tr], y[tr])
+        oof[k][va] = m.predict_proba(X.iloc[va])[:, 1]
+
+w = {"lgb": 0.4, "hgb": 0.4, "lr": 0.2}
+ens = sum(w[k] * oof[k] for k in w)
+
+best_t, best_f = 0.5, 0
+for t in np.arange(0.1, 0.7, 0.01):
+    f = f1_score(y, (ens >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+
+preds = np.zeros(len(Xt))
+for k, m in models().items():
+    m.fit(X, y)
+    preds += w[k] * m.predict_proba(Xt)[:, 1]
+
+out = pd.DataFrame({"proba": np.clip(preds, 0, 1), "label": (preds >= best_t).astype(int)})
+out.to_csv("predictions.csv", index=False)

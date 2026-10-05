@@ -1,0 +1,64 @@
+import pandas as pd, numpy as np
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+import xgboost as xgb
+from catboost import CatBoostClassifier
+
+tr = pd.read_csv("train.csv")
+te = pd.read_csv("test_features.csv")
+
+def prep(d):
+    d = d.copy()
+    d["Weekend"] = d["Weekend"].astype(int)
+    d["TotalDur"] = d["Administrative_Duration"] + d["Informational_Duration"] + d["ProductRelated_Duration"]
+    d["TotalPages"] = d["Administrative"] + d["Informational"] + d["ProductRelated"]
+    d["DurPerPage"] = d["ProductRelated_Duration"] / (d["ProductRelated"] + 1)
+    d["LogPV"] = np.log1p(d["PageValues"])
+    d["PV_pos"] = (d["PageValues"] > 0).astype(int)
+    d["ExitBounce"] = d["ExitRates"] - d["BounceRates"]
+    return d
+
+y = tr["Revenue"].values
+X = prep(tr.drop(columns=["Revenue"]))
+Xt = prep(te)
+allx = pd.concat([X, Xt], keys=["tr", "te"])
+allx = pd.get_dummies(allx, columns=["Month", "VisitorType"], dtype=int)
+X = allx.loc["tr"].reset_index(drop=True)
+Xt = allx.loc["te"].reset_index(drop=True)
+
+def models():
+    return {
+        "lgb": lgb.LGBMClassifier(n_estimators=300, learning_rate=0.03, num_leaves=15,
+                                  min_child_samples=30, subsample=0.8, subsample_freq=1,
+                                  colsample_bytree=0.7, reg_lambda=2, random_state=42, verbose=-1),
+        "cat": CatBoostClassifier(iterations=500, learning_rate=0.04, depth=5,
+                                  random_seed=42, verbose=0, thread_count=4),
+        "xgb": xgb.XGBClassifier(n_estimators=300, learning_rate=0.03, max_depth=4,
+                                 subsample=0.8, colsample_bytree=0.7, min_child_weight=3,
+                                 random_state=42, n_jobs=4, eval_metric="logloss"),
+    }
+
+skf = StratifiedKFold(5, shuffle=True, random_state=42)
+oof = np.zeros(len(X))
+for a, b in skf.split(X, y):
+    ps = []
+    for m in models().values():
+        m.fit(X.iloc[a], y[a])
+        ps.append(m.predict_proba(X.iloc[b])[:, 1])
+    oof[b] = np.mean(ps, axis=0)
+
+best_t, best_f = 0.5, 0
+for t in np.arange(0.15, 0.7, 0.01):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("CV F1", best_f, "thr", best_t)
+
+ps = []
+for m in models().values():
+    m.fit(X, y)
+    ps.append(m.predict_proba(Xt)[:, 1])
+p = np.mean(ps, axis=0)
+
+pd.DataFrame({"proba": p, "label": (p >= best_t).astype(int)}).to_csv("predictions.csv", index=False)

@@ -1,0 +1,77 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.linear_model import LogisticRegression
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+SEED = 42
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["y"].astype(int).values
+X = train.drop(columns=["y"])
+Xt = test.copy()
+
+cat_cols = [c for c in X.columns if X[c].dtype == object]
+num_cols = [c for c in X.columns if c not in cat_cols]
+
+def fe(df):
+    df = df.copy()
+    df["pdays_flag"] = (df["pdays"] == 999).astype(float)
+    df.loc[df["pdays"].isna(), "pdays_flag"] = np.nan
+    df["dur_log"] = np.log1p(df["duration"])
+    df["dur_per_camp"] = df["duration"] / df["campaign"]
+    df["eur_nr"] = df["euribor3m"] * df["nr.employed"]
+    return df
+
+X = fe(X); Xt = fe(Xt)
+num_cols = [c for c in X.columns if c not in cat_cols]
+
+# LightGBM version: category dtype
+allc = pd.concat([X, Xt], axis=0)
+X_l = X.copy(); Xt_l = Xt.copy()
+for c in cat_cols:
+    cats = sorted(allc[c].astype(str).unique())
+    X_l[c] = pd.Categorical(X[c].astype(str), categories=cats)
+    Xt_l[c] = pd.Categorical(Xt[c].astype(str), categories=cats)
+
+# CatBoost version
+X_c = X.copy(); Xt_c = Xt.copy()
+for c in cat_cols:
+    X_c[c] = X_c[c].astype(str); Xt_c[c] = Xt_c[c].astype(str)
+
+lgb_params = dict(n_estimators=400, learning_rate=0.03, num_leaves=15, min_child_samples=30,
+                  subsample=0.8, subsample_freq=1, colsample_bytree=0.7, reg_lambda=2.0,
+                  random_state=SEED, verbose=-1, n_jobs=-1)
+cb_params = dict(iterations=600, learning_rate=0.05, depth=6, random_seed=SEED, verbose=0,
+                 cat_features=cat_cols, thread_count=-1)
+
+skf = StratifiedKFold(5, shuffle=True, random_state=SEED)
+oof = np.zeros(len(X)); pred = np.zeros(len(Xt))
+
+for tr, va in skf.split(X, y):
+    m1 = lgb.LGBMClassifier(**lgb_params)
+    m1.fit(X_l.iloc[tr], y[tr])
+    p1v = m1.predict_proba(X_l.iloc[va])[:, 1]
+    p1t = m1.predict_proba(Xt_l)[:, 1]
+
+    m2 = CatBoostClassifier(**cb_params)
+    m2.fit(X_c.iloc[tr], y[tr])
+    p2v = m2.predict_proba(X_c.iloc[va])[:, 1]
+    p2t = m2.predict_proba(Xt_c)[:, 1]
+
+    oof[va] = 0.5 * p1v + 0.5 * p2v
+    pred += (0.5 * p1t + 0.5 * p2t) / 5
+
+# threshold tuning on OOF
+best_t, best_f = 0.5, 0
+for t in np.arange(0.1, 0.8, 0.01):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "oof F1", best_f)
+
+out = pd.DataFrame({"proba": np.clip(pred, 0, 1), "label": (pred >= best_t).astype(int)})
+out.to_csv("predictions.csv", index=False)

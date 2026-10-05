@@ -1,0 +1,77 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+target = "Revenue"
+y = train[target].astype(int).values
+X_raw = train.drop(columns=[target])
+T_raw = test[X_raw.columns]
+
+month_map = {"Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "June": 6, "Jun": 6, "Jul": 7,
+             "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12}
+
+num_cols = ["Administrative", "Administrative_Duration", "Informational", "Informational_Duration",
+            "ProductRelated", "ProductRelated_Duration", "BounceRates", "ExitRates", "PageValues",
+            "SpecialDay", "OperatingSystems", "Browser", "Region", "TrafficType"]
+
+
+def prep(df):
+    d = pd.DataFrame(index=df.index)
+    for c in num_cols:
+        d[c] = pd.to_numeric(df[c], errors="coerce")
+    d["all_missing"] = d[num_cols].isna().all(axis=1).astype(int)
+    d["Month_num"] = df["Month"].map(month_map)
+    d["Weekend"] = df["Weekend"].astype(str).str.lower().isin(["true", "1"]).astype(int)
+    for v in ["Returning_Visitor", "New_Visitor", "Other"]:
+        d["VT_" + v] = (df["VisitorType"] == v).astype(int)
+    for m in ["Feb", "Mar", "May", "June", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]:
+        d["M_" + m] = (df["Month"] == m).astype(int)
+    d["TotalPages"] = d["Administrative"] + d["Informational"] + d["ProductRelated"]
+    d["TotalDuration"] = d["Administrative_Duration"] + d["Informational_Duration"] + d["ProductRelated_Duration"]
+    d["DurPerPage"] = d["TotalDuration"] / (d["TotalPages"] + 1)
+    d["PV_log"] = np.log1p(d["PageValues"])
+    d["PV_pos"] = (d["PageValues"] > 0).astype(float)
+    d.loc[d["all_missing"] == 1, ["PV_pos"]] = np.nan
+    return d
+
+
+X = prep(X_raw)
+T = prep(T_raw)
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+oof_l = np.zeros(len(X))
+oof_c = np.zeros(len(X))
+te_l = np.zeros(len(T))
+te_c = np.zeros(len(T))
+
+for tr, va in skf.split(X, y):
+    m1 = lgb.LGBMClassifier(n_estimators=400, learning_rate=0.03, num_leaves=15, min_child_samples=20,
+                            subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
+                            reg_lambda=1.0, random_state=42, verbose=-1, n_jobs=-1)
+    m1.fit(X.iloc[tr], y[tr])
+    oof_l[va] = m1.predict_proba(X.iloc[va])[:, 1]
+    te_l += m1.predict_proba(T)[:, 1] / 5
+
+    m2 = CatBoostClassifier(iterations=500, learning_rate=0.05, depth=6, random_seed=42,
+                            verbose=0, thread_count=-1)
+    m2.fit(X.iloc[tr], y[tr])
+    oof_c[va] = m2.predict_proba(X.iloc[va])[:, 1]
+    te_c += m2.predict_proba(T)[:, 1] / 5
+
+oof = (oof_l + oof_c) / 2
+te = (te_l + te_c) / 2
+
+best_t, best_f = 0.5, -1
+for t in np.arange(0.1, 0.9, 0.01):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+
+pred = (te >= best_t).astype(int)
+pd.DataFrame({"proba": np.clip(te, 0, 1), "label": pred}).to_csv("predictions.csv", index=False)

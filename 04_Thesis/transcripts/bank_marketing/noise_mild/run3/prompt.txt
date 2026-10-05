@@ -1,0 +1,95 @@
+You are a data scientist. Build a complete machine learning pipeline for a
+binary classification task.
+
+## Task
+Predict the target column "y" (1 = positive class, 0 = negative class).
+Your pipeline will be evaluated on the F1 score of the positive class on a
+held-out test set, so optimize for F1.
+
+## Files (in the current working directory)
+- train.csv          : training data, including the target column "y"
+- test_features.csv  : test data, same columns but WITHOUT the target
+
+## Data profile (training data)
+Rows: 32950, Columns: 21
+
+Columns (type, missing %):
+- age: int64, 0.0% missing
+- job: object, 0.0% missing
+- marital: object, 0.0% missing
+- education: object, 0.0% missing
+- default: object, 0.0% missing
+- housing: object, 0.0% missing
+- loan: object, 0.0% missing
+- contact: object, 0.0% missing
+- month: object, 0.0% missing
+- day_of_week: object, 0.0% missing
+- duration: int64, 0.0% missing
+- campaign: int64, 0.0% missing
+- pdays: int64, 0.0% missing
+- previous: int64, 0.0% missing
+- poutcome: object, 0.0% missing
+- emp.var.rate: float64, 0.0% missing
+- cons.price.idx: float64, 0.0% missing
+- cons.conf.idx: float64, 0.0% missing
+- euribor3m: float64, 0.0% missing
+- nr.employed: float64, 0.0% missing
+- y: int64, 0.0% missing
+
+Numeric summary:
+                  count      mean      std       min       25%       50%       75%       max
+age             32950.0    40.014   10.404    17.000    32.000    38.000    47.000    98.000
+duration        32950.0   258.127  258.976     0.000   103.000   180.000   319.000  4918.000
+campaign        32950.0     2.561    2.752     1.000     1.000     2.000     3.000    56.000
+pdays           32950.0   962.052  187.951     0.000   999.000   999.000   999.000   999.000
+previous        32950.0     0.175    0.499     0.000     0.000     0.000     0.000     7.000
+emp.var.rate    32950.0     0.080    1.571    -3.400    -1.800     1.100     1.400     1.400
+cons.price.idx  32950.0    93.576    0.579    92.201    93.075    93.749    93.994    94.767
+cons.conf.idx   32950.0   -40.508    4.628   -50.800   -42.700   -41.800   -36.400   -26.900
+euribor3m       32950.0     3.618    1.736     0.634     1.344     4.857     4.961     5.045
+nr.employed     32950.0  5166.900   72.435  4963.600  5099.100  5191.000  5228.100  5228.100
+y               32950.0     0.150    0.357     0.000     0.000     0.000     0.000     1.000
+
+Text/boolean columns (most common values):
+- job: admin. (8314), blue-collar (7441), technician (5400), services (3196), management (2345)
+- marital: married (19953), single (9257), divorced (3675), unknown (65)
+- education: university.degree (9736), high.school (7596), basic.9y (4826), professional.course (4192), basic.4y (3322)
+- default: no (26007), unknown (6940), yes (3)
+- housing: yes (17254), no (14900), unknown (796)
+- loan: no (27131), yes (5023), unknown (796)
+- contact: cellular (20908), telephone (12042)
+- month: may (11011), jul (5763), aug (4948), jun (4247), nov (3266)
+- day_of_week: thu (6857), mon (6812), wed (6515), tue (6444), fri (6322)
+- poutcome: nonexistent (28416), failure (3429), success (1105)
+
+Target class balance:
+- 0: 85.0%
+- 1: 15.0%
+
+First 5 rows:
+   age           job   marital          education  default housing loan    contact month day_of_week  duration  campaign  pdays  previous     poutcome  emp.var.rate  cons.price.idx  cons.conf.idx  euribor3m  nr.employed  y
+0   49   blue-collar   married           basic.9y  unknown      no   no   cellular   nov         wed       227         4    999         0  nonexistent          -0.1          93.200          -42.0      4.120       5195.8  0
+1   37  entrepreneur   married  university.degree       no      no   no  telephone   nov         wed       202         2    999         1      failure          -0.1          93.200          -42.0      4.120       5195.8  0
+2   78       retired   married           basic.4y       no      no   no   cellular   jul         mon      1148         1    999         0  nonexistent          -1.7          94.215          -40.3      0.870       4991.6  1
+3   36        admin.   married  university.degree       no     yes   no  telephone   may         mon       120         2    999         0  nonexistent           1.1          93.994          -36.4      4.857       5191.0  0
+4   59       retired  divorced  university.degree       no      no   no   cellular   jun         tue       368         2    999         0  nonexistent          -2.9          92.963          -40.8      1.262       5076.2  0
+
+## Your job
+Write ONE complete Python script that:
+1. Loads train.csv and test_features.csv
+2. Prepares the data as you see fit
+3. Trains a model on the training data
+4. Predicts the test rows and saves predictions.csv with exactly these columns:
+   - "proba": predicted probability of the positive class (between 0 and 1)
+   - "label": predicted class (0 or 1)
+   in the same row order as test_features.csv
+
+## Constraints
+- Python 3, using only: pandas, numpy, scikit-learn, scipy, lightgbm, xgboost, catboost
+- Do not use AutoML frameworks
+- No internet access; do not download anything
+- Use random_state=42 wherever randomness is involved
+- The script must finish within 15 minutes on a laptop CPU
+- This is a single attempt: you will not see any output or errors
+
+Return only the Python script, in a single ```python code block.

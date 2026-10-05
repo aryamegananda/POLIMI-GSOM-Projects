@@ -1,0 +1,82 @@
+This script loads the data, imputes missing values, trains a blend of LightGBM and CatBoost, tunes the decision threshold on out-of-fold predictions, and writes `predictions.csv`. I have not run it.
+
+- **Missing values:** About 20% of the numeric values are missing, so I add missing-value indicators and let the tree models handle the NaNs natively. Categorical columns are ordinal-encoded for LightGBM and passed as strings to CatBoost.
+- **Features:** I add `pdays_contacted` (whether `pdays` is below 999) and `duration_log`. Rows that arrive with NaN in `pdays` stay NaN.
+- **Model and threshold:** I run 5-fold CV for both models and average their probabilities. The threshold that maximizes F1 on the out-of-fold blend is applied to the test predictions, which are the average of the fold models.
+- **Runtime:** The model sizes are small enough to finish well under 15 minutes on a laptop CPU.
+
+```python
+import pandas as pd, numpy as np
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["y"].values
+X = train.drop(columns=["y"])
+T = test.copy()
+
+cat_cols = [c for c in X.columns if X[c].dtype == object]
+num_cols = [c for c in X.columns if c not in cat_cols]
+
+def fe(df):
+    df = df.copy()
+    df["pdays_contacted"] = np.where(df["pdays"].isna(), np.nan, (df["pdays"] < 999).astype(float))
+    df["duration_log"] = np.log1p(df["duration"])
+    df["n_missing"] = df[num_cols].isna().sum(axis=1)
+    return df
+
+X = fe(X)
+T = fe(T)
+
+# LightGBM version: categories as pandas category
+full = pd.concat([X, T], axis=0, keys=["tr", "te"])
+Xl = full.copy()
+for c in cat_cols:
+    Xl[c] = Xl[c].fillna("NA").astype("category")
+Xl_tr = Xl.loc["tr"].reset_index(drop=True)
+Xl_te = Xl.loc["te"].reset_index(drop=True)
+
+# CatBoost version
+Xc_tr = X.copy()
+Xc_te = T.copy()
+for c in cat_cols:
+    Xc_tr[c] = Xc_tr[c].fillna("NA").astype(str)
+    Xc_te[c] = Xc_te[c].fillna("NA").astype(str)
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+oof_l = np.zeros(len(X)); oof_c = np.zeros(len(X))
+te_l = np.zeros(len(T)); te_c = np.zeros(len(T))
+
+for tr, va in skf.split(X, y):
+    m = lgb.LGBMClassifier(n_estimators=2000, learning_rate=0.03, num_leaves=31,
+                           min_child_samples=30, subsample=0.8, subsample_freq=1,
+                           colsample_bytree=0.7, reg_lambda=2.0,
+                           random_state=42, verbose=-1, n_jobs=-1)
+    m.fit(Xl_tr.iloc[tr], y[tr], eval_set=[(Xl_tr.iloc[va], y[va])],
+          callbacks=[lgb.early_stopping(100, verbose=False)])
+    oof_l[va] = m.predict_proba(Xl_tr.iloc[va])[:, 1]
+    te_l += m.predict_proba(Xl_te)[:, 1] / 5
+
+    c = CatBoostClassifier(iterations=1500, learning_rate=0.05, depth=6,
+                           random_seed=42, verbose=0, cat_features=cat_cols,
+                           early_stopping_rounds=100, thread_count=-1)
+    c.fit(Xc_tr.iloc[tr], y[tr], eval_set=(Xc_tr.iloc[va], y[va]))
+    oof_c[va] = c.predict_proba(Xc_tr.iloc[va])[:, 1]
+    te_c += c.predict_proba(Xc_te)[:, 1] / 5
+
+oof = (oof_l + oof_c) / 2
+te = (te_l + te_c) / 2
+
+best_t, best_f = 0.5, 0
+for t in np.arange(0.1, 0.9, 0.01):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "OOF F1", best_f)
+
+pd.DataFrame({"proba": te, "label": (te >= best_t).astype(int)}).to_csv("predictions.csv", index=False)
+```

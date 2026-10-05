@@ -1,0 +1,86 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+SEED = 42
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["y"].astype(int).values
+Xtr = train.drop(columns=["y"])
+Xte = test.copy()
+
+cat_cols = [c for c in Xtr.columns if Xtr[c].dtype == object]
+num_cols = [c for c in Xtr.columns if c not in cat_cols]
+
+
+def fe(df):
+    df = df.copy()
+    df["pdays_contacted"] = np.where(df["pdays"].isna(), np.nan, (df["pdays"] < 999).astype(float))
+    df["n_missing"] = df[num_cols].isna().sum(axis=1)
+    df["dur_per_campaign"] = df["duration"] / (df["campaign"] + 1)
+    return df
+
+
+Xtr = fe(Xtr)
+Xte = fe(Xte)
+all_num = [c for c in Xtr.columns if c not in cat_cols]
+
+# LightGBM version: category dtype
+full = pd.concat([Xtr, Xte], axis=0, keys=["tr", "te"])
+lgb_full = full.copy()
+for c in cat_cols:
+    lgb_full[c] = lgb_full[c].astype("category")
+Xtr_l = lgb_full.loc["tr"].reset_index(drop=True)
+Xte_l = lgb_full.loc["te"].reset_index(drop=True)
+
+# CatBoost version
+Xtr_c = Xtr.copy()
+Xte_c = Xte.copy()
+for c in cat_cols:
+    Xtr_c[c] = Xtr_c[c].fillna("unknown").astype(str)
+    Xte_c[c] = Xte_c[c].fillna("unknown").astype(str)
+
+
+def make_lgb():
+    return lgb.LGBMClassifier(
+        n_estimators=400, learning_rate=0.03, num_leaves=15,
+        min_child_samples=30, subsample=0.8, subsample_freq=1,
+        colsample_bytree=0.7, reg_lambda=5.0, random_state=SEED,
+        verbose=-1, n_jobs=-1)
+
+
+def make_cb():
+    return CatBoostClassifier(
+        iterations=600, learning_rate=0.05, depth=6, random_seed=SEED,
+        verbose=0, cat_features=cat_cols, thread_count=-1)
+
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+oof_l = np.zeros(len(y))
+oof_c = np.zeros(len(y))
+for tr_i, va_i in skf.split(Xtr_l, y):
+    m = make_lgb()
+    m.fit(Xtr_l.iloc[tr_i], y[tr_i])
+    oof_l[va_i] = m.predict_proba(Xtr_l.iloc[va_i])[:, 1]
+    m = make_cb()
+    m.fit(Xtr_c.iloc[tr_i], y[tr_i])
+    oof_c[va_i] = m.predict_proba(Xtr_c.iloc[va_i])[:, 1]
+
+oof = 0.5 * oof_l + 0.5 * oof_c
+best_t, best_f = 0.5, 0
+for t in np.arange(0.1, 0.8, 0.01):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("OOF F1", best_f, "threshold", best_t)
+
+ml = make_lgb().fit(Xtr_l, y)
+mc = make_cb().fit(Xtr_c, y)
+proba = 0.5 * ml.predict_proba(Xte_l)[:, 1] + 0.5 * mc.predict_proba(Xte_c)[:, 1]
+label = (proba >= best_t).astype(int)
+
+pd.DataFrame({"proba": proba, "label": label}).to_csv("predictions.csv", index=False)

@@ -1,0 +1,86 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.ensemble import HistGradientBoostingClassifier
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["Revenue"].astype(int).values
+Xtr = train.drop(columns=["Revenue"]).copy()
+Xte = test.copy()[Xtr.columns]
+
+month_map = {"Jan":1,"Feb":2,"Mar":3,"Apr":4,"May":5,"June":6,"Jun":6,"Jul":7,"Aug":8,"Sep":9,"Oct":10,"Nov":11,"Dec":12}
+
+def prep(df):
+    df = df.copy()
+    df["Weekend"] = df["Weekend"].astype(int)
+    df["MonthNum"] = df["Month"].map(month_map).fillna(0)
+    df["VisitorType"] = df["VisitorType"].astype(str)
+    df["TotalPages"] = df["Administrative"] + df["Informational"] + df["ProductRelated"]
+    df["TotalDur"] = df["Administrative_Duration"] + df["Informational_Duration"] + df["ProductRelated_Duration"]
+    df["DurPerPage"] = df["ProductRelated_Duration"] / (df["ProductRelated"] + 1)
+    df["PV_log"] = np.log1p(df["PageValues"])
+    df["PV_pos"] = (df["PageValues"] > 0).astype(int)
+    df["Exit_Bounce"] = df["ExitRates"] - df["BounceRates"]
+    df["PV_x_Exit"] = df["PageValues"] * (1 - df["ExitRates"])
+    return df
+
+Xtr = prep(Xtr)
+Xte = prep(Xte)
+
+# numeric version for LGB
+def to_num(df):
+    d = df.copy()
+    d["Month"] = d["MonthNum"]
+    d = pd.concat([d.drop(columns=["VisitorType"]),
+                   pd.get_dummies(d["VisitorType"], prefix="VT").astype(int)], axis=1)
+    return d
+
+Ntr = to_num(Xtr)
+Nte = to_num(Xte)
+Nte = Nte.reindex(columns=Ntr.columns, fill_value=0)
+
+cat_cols = ["Month", "VisitorType"]
+Ctr = Xtr.copy(); Cte = Xte.copy()
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+oof = np.zeros(len(y))
+pred_test = np.zeros(len(Xte))
+
+lgb_params = dict(n_estimators=400, learning_rate=0.02, num_leaves=15, min_child_samples=30,
+                  subsample=0.8, subsample_freq=1, colsample_bytree=0.7,
+                  reg_lambda=5.0, random_state=42, verbose=-1, n_jobs=4)
+
+for tr, va in skf.split(Ntr, y):
+    # LightGBM
+    m1 = lgb.LGBMClassifier(**lgb_params)
+    m1.fit(Ntr.iloc[tr], y[tr])
+    p1 = m1.predict_proba(Ntr.iloc[va])[:, 1]
+    t1 = m1.predict_proba(Nte)[:, 1]
+
+    # CatBoost
+    m2 = CatBoostClassifier(iterations=600, learning_rate=0.04, depth=6, l2_leaf_reg=5,
+                            random_seed=42, verbose=0, thread_count=4, cat_features=cat_cols)
+    m2.fit(Ctr.iloc[tr], y[tr])
+    p2 = m2.predict_proba(Ctr.iloc[va])[:, 1]
+    t2 = m2.predict_proba(Cte)[:, 1]
+
+    oof[va] = 0.5 * p1 + 0.5 * p2
+    pred_test += (0.5 * t1 + 0.5 * t2) / skf.n_splits
+
+# threshold optimization
+best_t, best_f = 0.5, 0
+for t in np.arange(0.15, 0.7, 0.01):
+    f = f1_score(y, (oof > t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+
+# smooth: use the threshold as found
+labels = (pred_test > best_t).astype(int)
+
+out = pd.DataFrame({"proba": np.clip(pred_test, 0, 1), "label": labels})
+out.to_csv("predictions.csv", index=False)

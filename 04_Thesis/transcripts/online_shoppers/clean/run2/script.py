@@ -1,0 +1,71 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+import lightgbm as lgb
+
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["Revenue"].astype(int).values
+Xtr = train.drop(columns=["Revenue"]).copy()
+Xte = test.copy()
+
+def prep(df):
+    df = df.copy()
+    df["Weekend"] = df["Weekend"].astype(str).str.lower().isin(["true", "1"]).astype(int)
+    month_map = {"Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "June": 6, "Jun": 6,
+                 "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12}
+    df["MonthNum"] = df["Month"].map(month_map).fillna(0)
+    df["Month"] = df["Month"].astype(str)
+    df["VisitorType"] = df["VisitorType"].astype(str)
+    df["TotalPages"] = df["Administrative"] + df["Informational"] + df["ProductRelated"]
+    df["TotalDuration"] = df["Administrative_Duration"] + df["Informational_Duration"] + df["ProductRelated_Duration"]
+    df["AvgProdDur"] = df["ProductRelated_Duration"] / (df["ProductRelated"] + 1)
+    df["PV_log"] = np.log1p(df["PageValues"])
+    df["PV_x_exit"] = df["PageValues"] * (1 - df["ExitRates"])
+    df["HasPV"] = (df["PageValues"] > 0).astype(int)
+    return df
+
+both = pd.concat([prep(Xtr), prep(Xte)], keys=["tr", "te"])
+both = pd.get_dummies(both, columns=["Month", "VisitorType"], dtype=int)
+Xtr_p = both.loc["tr"].reset_index(drop=True)
+Xte_p = both.loc["te"].reset_index(drop=True)
+
+def make_models():
+    return {
+        "lgb": lgb.LGBMClassifier(n_estimators=300, learning_rate=0.03, num_leaves=15,
+                                  min_child_samples=30, subsample=0.8, subsample_freq=1,
+                                  colsample_bytree=0.7, reg_lambda=2.0,
+                                  random_state=42, verbose=-1, n_jobs=4),
+        "hgb": HistGradientBoostingClassifier(learning_rate=0.04, max_iter=250, max_leaf_nodes=15,
+                                              min_samples_leaf=30, l2_regularization=1.0,
+                                              random_state=42),
+    }
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+oof = np.zeros(len(y))
+test_pred = np.zeros(len(Xte_p))
+for tr_idx, va_idx in skf.split(Xtr_p, y):
+    models = make_models()
+    pv = np.zeros(len(va_idx))
+    pt = np.zeros(len(Xte_p))
+    for m in models.values():
+        m.fit(Xtr_p.iloc[tr_idx], y[tr_idx])
+        pv += m.predict_proba(Xtr_p.iloc[va_idx])[:, 1] / len(models)
+        pt += m.predict_proba(Xte_p)[:, 1] / len(models)
+    oof[va_idx] = pv
+    test_pred += pt / skf.n_splits
+
+best_t, best_f = 0.5, 0
+for t in np.arange(0.15, 0.7, 0.01):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "oof F1", best_f)
+
+out = pd.DataFrame({"proba": np.clip(test_pred, 0, 1),
+                    "label": (test_pred >= best_t).astype(int)})
+out.to_csv("predictions.csv", index=False)

@@ -1,0 +1,78 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+TARGET = "default.payment.next.month"
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+pay = ["PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6"]
+bill = [f"BILL_AMT{i}" for i in range(1, 7)]
+pamt = [f"PAY_AMT{i}" for i in range(1, 7)]
+
+
+def fe(df):
+    d = df.drop(columns=[c for c in ["ID", TARGET] if c in df.columns]).copy()
+    d["pay_mean"] = d[pay].mean(axis=1)
+    d["pay_max"] = d[pay].max(axis=1)
+    d["pay_min"] = d[pay].min(axis=1)
+    d["pay_pos_cnt"] = (d[pay] > 0).sum(axis=1).where(d[pay].notna().any(axis=1))
+    d["bill_mean"] = d[bill].mean(axis=1)
+    d["bill_max"] = d[bill].max(axis=1)
+    d["pamt_mean"] = d[pamt].mean(axis=1)
+    d["pamt_sum"] = d[pamt].sum(axis=1, min_count=1)
+    d["bill_sum"] = d[bill].sum(axis=1, min_count=1)
+    d["util_mean"] = d["bill_mean"] / d["LIMIT_BAL"]
+    for i in range(1, 7):
+        d[f"util{i}"] = d[f"BILL_AMT{i}"] / d["LIMIT_BAL"]
+        d[f"payratio{i}"] = d[f"PAY_AMT{i}"] / (d[f"BILL_AMT{i}"].abs() + 1)
+    d["pay_to_bill"] = d["pamt_sum"] / (d["bill_sum"].abs() + 1)
+    d["bill_trend"] = d["BILL_AMT1"] - d["BILL_AMT6"]
+    d["pay_trend"] = d["PAY_0"] - d["PAY_6"]
+    d["limit_pay"] = d["pamt_mean"] / d["LIMIT_BAL"]
+    d = d.replace([np.inf, -np.inf], np.nan)
+    return d
+
+
+X = fe(train)
+y = train[TARGET].values
+Xt = fe(test)[X.columns]
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+oof_l = np.zeros(len(X))
+oof_c = np.zeros(len(X))
+test_l = np.zeros(len(Xt))
+test_c = np.zeros(len(Xt))
+
+for tr, va in skf.split(X, y):
+    m = lgb.LGBMClassifier(
+        n_estimators=2000, learning_rate=0.02, num_leaves=15, min_child_samples=40,
+        subsample=0.8, subsample_freq=1, colsample_bytree=0.6, reg_lambda=5,
+        random_state=42, verbose=-1, n_jobs=-1)
+    m.fit(X.iloc[tr], y[tr], eval_set=[(X.iloc[va], y[va])],
+          callbacks=[lgb.early_stopping(100, verbose=False)])
+    oof_l[va] = m.predict_proba(X.iloc[va])[:, 1]
+    test_l += m.predict_proba(Xt)[:, 1] / 5
+
+    c = CatBoostClassifier(
+        iterations=1500, learning_rate=0.04, depth=6, l2_leaf_reg=5,
+        random_seed=42, verbose=0, early_stopping_rounds=100, thread_count=-1)
+    c.fit(X.iloc[tr], y[tr], eval_set=(X.iloc[va], y[va]))
+    oof_c[va] = c.predict_proba(X.iloc[va])[:, 1]
+    test_c += c.predict_proba(Xt)[:, 1] / 5
+
+oof = 0.5 * oof_l + 0.5 * oof_c
+proba = 0.5 * test_l + 0.5 * test_c
+
+best_t, best_f = 0.5, 0
+for t in np.arange(0.15, 0.7, 0.005):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "OOF F1", best_f)
+
+pd.DataFrame({"proba": proba, "label": (proba >= best_t).astype(int)}).to_csv(
+    "predictions.csv", index=False)

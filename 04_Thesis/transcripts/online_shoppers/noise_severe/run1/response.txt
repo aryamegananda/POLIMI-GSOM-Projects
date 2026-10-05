@@ -1,0 +1,79 @@
+The script below is untested, since I can't run it here. It builds a gradient-boosting ensemble and tunes the decision threshold for F1 using out-of-fold predictions.
+
+1. **Features:** it adds a few simple ones (total pages, total duration, average time per page, and a log of PageValues). Month and VisitorType are one-hot encoded, and Weekend is cast to int.
+2. **Models:** it uses LightGBM, CatBoost and XGBoost with fairly shallow trees and moderate regularization.
+3. **Threshold:** it runs 5-fold stratified cross-validation on the training data. It averages the out-of-fold probabilities across the three models, then scans thresholds from 0.15 to 0.8 and keeps the one with the best F1.
+4. **Final predictions:** each model is refit on the full training data and the test probabilities are averaged. The tuned threshold turns them into labels, and the script writes `proba` and `label` to `predictions.csv` in the original row order.
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+import xgboost as xgb
+from catboost import CatBoostClassifier
+
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["Revenue"].astype(int).values
+Xtr = train.drop(columns=["Revenue"])
+Xte = test.copy()
+
+def prep(df):
+    df = df.copy()
+    df["Weekend"] = df["Weekend"].astype(int)
+    df["TotalPages"] = df["Administrative"] + df["Informational"] + df["ProductRelated"]
+    df["TotalDur"] = df["Administrative_Duration"] + df["Informational_Duration"] + df["ProductRelated_Duration"]
+    df["DurPerPage"] = df["TotalDur"] / (df["TotalPages"] + 1)
+    df["ProdDurPerPage"] = df["ProductRelated_Duration"] / (df["ProductRelated"] + 1)
+    df["LogPV"] = np.log1p(df["PageValues"])
+    df["ExitBounce"] = df["ExitRates"] - df["BounceRates"]
+    return df
+
+allx = pd.concat([prep(Xtr), prep(Xte)], axis=0, keys=["tr", "te"])
+allx = pd.get_dummies(allx, columns=["Month", "VisitorType"], dtype=int)
+Xtr_p = allx.loc["tr"].reset_index(drop=True)
+Xte_p = allx.loc["te"].reset_index(drop=True)
+Xte_p = Xte_p[Xtr_p.columns]
+
+def make_models():
+    return {
+        "lgb": lgb.LGBMClassifier(n_estimators=400, learning_rate=0.02, num_leaves=15,
+                                  min_child_samples=30, subsample=0.8, subsample_freq=1,
+                                  colsample_bytree=0.7, reg_lambda=5, random_state=42,
+                                  verbose=-1, n_jobs=4),
+        "cat": CatBoostClassifier(iterations=600, learning_rate=0.03, depth=6,
+                                  random_seed=42, verbose=0, thread_count=4),
+        "xgb": xgb.XGBClassifier(n_estimators=400, learning_rate=0.02, max_depth=4,
+                                 subsample=0.8, colsample_bytree=0.7, min_child_weight=3,
+                                 reg_lambda=5, random_state=42, n_jobs=4,
+                                 eval_metric="logloss"),
+    }
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+oof = np.zeros(len(Xtr_p))
+for tr_idx, va_idx in skf.split(Xtr_p, y):
+    preds = []
+    for name, m in make_models().items():
+        m.fit(Xtr_p.iloc[tr_idx], y[tr_idx])
+        preds.append(m.predict_proba(Xtr_p.iloc[va_idx])[:, 1])
+    oof[va_idx] = np.mean(preds, axis=0)
+
+best_t, best_f = 0.5, 0
+for t in np.arange(0.15, 0.8, 0.01):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "oof F1", best_f)
+
+test_preds = []
+for name, m in make_models().items():
+    m.fit(Xtr_p, y)
+    test_preds.append(m.predict_proba(Xte_p)[:, 1])
+proba = np.mean(test_preds, axis=0)
+label = (proba >= best_t).astype(int)
+
+pd.DataFrame({"proba": proba, "label": label}).to_csv("predictions.csv", index=False)
+```

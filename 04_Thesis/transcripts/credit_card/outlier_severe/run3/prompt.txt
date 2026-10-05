@@ -1,0 +1,101 @@
+You are a data scientist. Build a complete machine learning pipeline for a
+binary classification task.
+
+## Task
+Predict the target column "default.payment.next.month" (1 = positive class, 0 = negative class).
+Your pipeline will be evaluated on the F1 score of the positive class on a
+held-out test set, so optimize for F1.
+
+## Files (in the current working directory)
+- train.csv          : training data, including the target column "default.payment.next.month"
+- test_features.csv  : test data, same columns but WITHOUT the target
+
+## Data profile (training data)
+Rows: 24000, Columns: 25
+
+Columns (type, missing %):
+- ID: int64, 0.0% missing
+- LIMIT_BAL: float64, 0.0% missing
+- SEX: int64, 0.0% missing
+- EDUCATION: int64, 0.0% missing
+- MARRIAGE: int64, 0.0% missing
+- AGE: int64, 0.0% missing
+- PAY_0: int64, 0.0% missing
+- PAY_2: int64, 0.0% missing
+- PAY_3: int64, 0.0% missing
+- PAY_4: int64, 0.0% missing
+- PAY_5: int64, 0.0% missing
+- PAY_6: int64, 0.0% missing
+- BILL_AMT1: float64, 0.0% missing
+- BILL_AMT2: float64, 0.0% missing
+- BILL_AMT3: float64, 0.0% missing
+- BILL_AMT4: float64, 0.0% missing
+- BILL_AMT5: float64, 0.0% missing
+- BILL_AMT6: float64, 0.0% missing
+- PAY_AMT1: float64, 0.0% missing
+- PAY_AMT2: float64, 0.0% missing
+- PAY_AMT3: float64, 0.0% missing
+- PAY_AMT4: float64, 0.0% missing
+- PAY_AMT5: float64, 0.0% missing
+- PAY_AMT6: float64, 0.0% missing
+- default.payment.next.month: int64, 0.0% missing
+
+Numeric summary:
+                              count        mean         std         min       25%       50%        75%        max
+ID                          24000.0   14999.406   14236.882  -19589.000   6152.25   14912.5   23769.25    49539.0
+LIMIT_BAL                   24000.0  166522.859  212608.350 -350662.913  50000.00  140000.0  260000.00  1000000.0
+SEX                         24000.0       1.815       0.671       1.000      1.00       2.0       2.00        3.0
+EDUCATION                   24000.0       2.629       1.977       0.000      1.00       2.0       3.00        7.0
+MARRIAGE                    24000.0       1.921       0.997       0.000      1.00       2.0       2.00        4.0
+AGE                         24000.0      35.452      15.097      -1.000     27.00      34.0      43.00       75.0
+PAY_0                       24000.0       1.334       3.383      -2.000      0.00       0.0       1.00        9.0
+PAY_2                       24000.0       1.236       3.445      -2.000     -1.00       0.0       2.00        9.0
+PAY_3                       24000.0       1.206       3.455      -2.000     -1.00       0.0       2.00        9.0
+PAY_4                       24000.0       1.157       3.464      -2.000     -1.00       0.0       0.00        9.0
+PAY_5                       24000.0       1.118       3.470      -2.000     -1.00       0.0       0.00        9.0
+PAY_6                       24000.0       1.098       3.483      -2.000     -1.00       0.0       0.00        9.0
+BILL_AMT1                   24000.0   50130.340  120785.339 -242896.361   1917.25   21871.5   80604.75   964511.0
+BILL_AMT2                   24000.0   49085.516  116413.223 -234306.057   1615.25   21048.0   78540.50   983931.0
+BILL_AMT3                   24000.0   46153.595  112105.643 -226752.328   1276.00   19859.5   74000.75   693131.0
+BILL_AMT4                   24000.0   43074.479  105077.861 -212966.346   1050.00   18967.5   68662.00   891586.0
+BILL_AMT5                   24000.0   40682.042   99314.045 -202330.817    834.75   18198.5   64150.50   927171.0
+BILL_AMT6                   24000.0   38545.626   97405.389 -339603.000    540.00   16961.0   60520.50   961664.0
+PAY_AMT1                    24000.0    5593.527   26671.871  -58962.974    360.00    2100.0    6040.25   873552.0
+PAY_AMT2                    24000.0    5736.246   32599.922  -75123.690    326.00    2012.0    6000.00  1215471.0
+PAY_AMT3                    24000.0    5159.266   29062.549  -64833.621     20.00    1800.0    5145.75   896040.0
+PAY_AMT4                    24000.0    4917.600   24750.234  -55448.760      0.00    1500.0    5000.00   621000.0
+PAY_AMT5                    24000.0    4607.162   24559.449  -55415.340      0.00    1500.0    5000.00   426529.0
+PAY_AMT6                    24000.0    5403.041   29637.617  -66160.051      0.00    1500.0    5000.00   528666.0
+default.payment.next.month  24000.0       0.221       0.415       0.000      0.00       0.0       0.00        1.0
+
+Target class balance:
+- 0: 77.9%
+- 1: 22.1%
+
+First 5 rows:
+      ID      LIMIT_BAL  SEX  EDUCATION  MARRIAGE  AGE  PAY_0  PAY_2  PAY_3  PAY_4  PAY_5  PAY_6      BILL_AMT1      BILL_AMT2      BILL_AMT3      BILL_AMT4      BILL_AMT5      BILL_AMT6      PAY_AMT1      PAY_AMT2      PAY_AMT3      PAY_AMT4      PAY_AMT5      PAY_AMT6  default.payment.next.month
+0  22789  160000.000000    2          2         2   33      2      2      3      2      0      0  161771.000000  172632.000000  168541.000000  164310.000000  162681.000000  163005.000000  15000.000000      0.000000      0.000000   6100.000000  12300.000000   6100.000000                           0
+1  29007  150000.000000    2          1         2   34      1     -1     -1     -2     -2     -2       0.000000      53.000000       0.000000       0.000000       0.000000       0.000000     53.000000      0.000000      0.000000      0.000000      0.000000      0.000000                           0
+2 -12577 -327382.680500    3          7         4   64      9      9      9      9      9      9 -228172.841078 -214961.354717  271399.597023 -168794.958460 -154812.575910 -175791.992053  63663.440294  86537.478437  70749.660611 -53737.934907 -43660.165566  62458.747588                           0
+3 -12473  671866.347703    3          7         4   68      9      9      9      9      9      9  304953.035021  331143.090156  255722.306131 -198957.434339 -183724.088804  219353.660349 -49275.739306 -61871.799013  73875.205006  61683.073907 -44683.847056 -53835.355389                           1
+4  11347  310000.000000    2          1         2   32      1     -2     -1      0      0     -2       0.000000       0.000000     326.000000     326.000000    -235.000000    -235.000000      0.000000    326.000000      0.000000      0.000000      0.000000   1200.000000                           0
+
+## Your job
+Write ONE complete Python script that:
+1. Loads train.csv and test_features.csv
+2. Prepares the data as you see fit
+3. Trains a model on the training data
+4. Predicts the test rows and saves predictions.csv with exactly these columns:
+   - "proba": predicted probability of the positive class (between 0 and 1)
+   - "label": predicted class (0 or 1)
+   in the same row order as test_features.csv
+
+## Constraints
+- Python 3, using only: pandas, numpy, scikit-learn, scipy, lightgbm, xgboost, catboost
+- Do not use AutoML frameworks
+- No internet access; do not download anything
+- Use random_state=42 wherever randomness is involved
+- The script must finish within 15 minutes on a laptop CPU
+- This is a single attempt: you will not see any output or errors
+
+Return only the Python script, in a single ```python code block.

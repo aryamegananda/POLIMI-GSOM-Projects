@@ -1,0 +1,80 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import HistGradientBoostingClassifier
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+SEED = 42
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["Revenue"].astype(int).values
+Xtr = train.drop(columns=["Revenue"])
+Xte = test.copy()[Xtr.columns]
+
+months = ["Jan","Feb","Mar","Apr","May","June","Jul","Aug","Sep","Oct","Nov","Dec"]
+
+def prep(df):
+    d = df.copy()
+    d["Weekend"] = d["Weekend"].astype(str).str.lower().isin(["true", "1"]).astype(int)
+    d["Month_num"] = d["Month"].map({m: i for i, m in enumerate(months)}).fillna(-1)
+    d["Visitor_new"] = (d["VisitorType"] == "New_Visitor").astype(int)
+    d["Visitor_ret"] = (d["VisitorType"] == "Returning_Visitor").astype(int)
+    d["TotalPages"] = d["Administrative"] + d["Informational"] + d["ProductRelated"]
+    d["TotalDur"] = d["Administrative_Duration"] + d["Informational_Duration"] + d["ProductRelated_Duration"]
+    d["DurPerPage"] = d["TotalDur"] / (d["TotalPages"].abs() + 1)
+    d["PV_log"] = np.sign(d["PageValues"]) * np.log1p(d["PageValues"].abs())
+    d["PV_pos"] = (d["PageValues"] > 0).astype(int)
+    d["ExitBounce"] = d["ExitRates"] - d["BounceRates"]
+    d["PV_x_Exit"] = d["PageValues"] * d["ExitRates"]
+    return d
+
+A = prep(Xtr)
+B = prep(Xte)
+# one-hot for months and visitor type for all models
+full = pd.concat([A, B], keys=["a", "b"])
+full = pd.get_dummies(full, columns=["Month", "VisitorType"], dtype=int)
+A = full.loc["a"].reset_index(drop=True)
+B = full.loc["b"].reset_index(drop=True)
+B = B[A.columns]
+
+def models():
+    return {
+        "lgb": lgb.LGBMClassifier(n_estimators=400, learning_rate=0.02, num_leaves=15,
+                                  min_child_samples=30, subsample=0.8, subsample_freq=1,
+                                  colsample_bytree=0.7, reg_lambda=5, random_state=SEED,
+                                  verbose=-1, n_jobs=4),
+        "cat": CatBoostClassifier(iterations=600, learning_rate=0.03, depth=6,
+                                  random_seed=SEED, verbose=0, thread_count=4),
+        "hgb": HistGradientBoostingClassifier(learning_rate=0.04, max_iter=250, max_leaf_nodes=15,
+                                              l2_regularization=2.0, random_state=SEED),
+    }
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+names = list(models().keys())
+oof = {n: np.zeros(len(A)) for n in names}
+tp = {n: np.zeros(len(B)) for n in names}
+
+for tr, va in skf.split(A, y):
+    ms = models()
+    for n in names:
+        m = ms[n]
+        m.fit(A.iloc[tr], y[tr])
+        oof[n][va] = m.predict_proba(A.iloc[va])[:, 1]
+        tp[n] += m.predict_proba(B)[:, 1] / skf.n_splits
+
+oof_ens = np.mean([oof[n] for n in names], axis=0)
+test_ens = np.mean([tp[n] for n in names], axis=0)
+
+best_t, best_f = 0.5, -1
+for t in np.arange(0.15, 0.7, 0.01):
+    f = f1_score(y, (oof_ens >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+
+pred = pd.DataFrame({"proba": np.clip(test_ens, 0, 1),
+                     "label": (test_ens >= best_t).astype(int)})
+pred.to_csv("predictions.csv", index=False)

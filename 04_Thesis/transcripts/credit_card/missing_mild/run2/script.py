@@ -1,0 +1,85 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+import lightgbm as lgb
+
+TARGET = "default.payment.next.month"
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+def fe(df):
+    df = df.copy()
+    df = df.drop(columns=["ID"], errors="ignore")
+    pays = ["PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6"]
+    bills = [f"BILL_AMT{i}" for i in range(1, 7)]
+    pamt = [f"PAY_AMT{i}" for i in range(1, 7)]
+    df["pay_mean"] = df[pays].mean(axis=1)
+    df["pay_max"] = df[pays].max(axis=1)
+    df["pay_sum_pos"] = df[pays].clip(lower=0).sum(axis=1)
+    df["n_late"] = (df[pays] > 0).sum(axis=1)
+    df["bill_mean"] = df[bills].mean(axis=1)
+    df["pamt_mean"] = df[pamt].mean(axis=1)
+    df["pamt_sum"] = df[pamt].sum(axis=1)
+    df["bill_sum"] = df[bills].sum(axis=1)
+    df["pay_ratio"] = df["pamt_sum"] / (df["bill_sum"].abs() + 1)
+    df["util1"] = df["BILL_AMT1"] / (df["LIMIT_BAL"] + 1)
+    df["util_mean"] = df["bill_mean"] / (df["LIMIT_BAL"] + 1)
+    for i in range(1, 7):
+        df[f"ratio{i}"] = df[f"PAY_AMT{i}"] / (df[f"BILL_AMT{i}"].abs() + 1)
+    df["bill_trend"] = df["BILL_AMT1"] - df["BILL_AMT6"]
+    df["pay_trend"] = df["PAY_0"] - df["PAY_6"]
+    return df
+
+y = train[TARGET].values
+X = fe(train.drop(columns=[TARGET]))
+Xt = fe(test)[X.columns]
+
+params = dict(n_estimators=400, learning_rate=0.02, num_leaves=15, min_child_samples=40,
+              subsample=0.8, subsample_freq=1, colsample_bytree=0.6, reg_lambda=5.0,
+              random_state=42, verbose=-1, n_jobs=-1)
+
+skf = StratifiedKFold(5, shuffle=True, random_state=42)
+oof_l = np.zeros(len(X)); oof_r = np.zeros(len(X))
+pt_l = np.zeros(len(Xt)); pt_r = np.zeros(len(Xt))
+
+def mk_lr():
+    return make_pipeline(SimpleImputer(strategy="median"), StandardScaler(),
+                         LogisticRegression(C=0.5, max_iter=2000, random_state=42))
+
+# signed-log version for LR
+def slog(d):
+    d = d.copy()
+    for c in d.columns:
+        if c.startswith(("BILL", "PAY_AMT", "bill_", "pamt", "LIMIT")) or c == "pay_ratio" or c.startswith("ratio"):
+            d[c] = np.sign(d[c]) * np.log1p(np.abs(d[c]))
+    return d
+Xl, Xtl = slog(X), slog(Xt)
+
+for tr, va in skf.split(X, y):
+    m = lgb.LGBMClassifier(**params)
+    m.fit(X.iloc[tr], y[tr])
+    oof_l[va] = m.predict_proba(X.iloc[va])[:, 1]
+    pt_l += m.predict_proba(Xt)[:, 1] / 5
+    lr = mk_lr()
+    lr.fit(Xl.iloc[tr], y[tr])
+    oof_r[va] = lr.predict_proba(Xl.iloc[va])[:, 1]
+    pt_r += lr.predict_proba(Xtl)[:, 1] / 5
+
+best = (0, 0.8)
+for w in [1.0, 0.8, 0.7, 0.5]:
+    o = w * oof_l + (1 - w) * oof_r
+    for t in np.arange(0.15, 0.7, 0.01):
+        f = f1_score(y, (o >= t).astype(int))
+        if f > best[0]:
+            best = (f, w, t) if False else (f, w)
+            bt = t
+            bw = w
+w = bw
+proba = w * pt_l + (1 - w) * pt_r
+label = (proba >= bt).astype(int)
+pd.DataFrame({"proba": proba, "label": label}).to_csv("predictions.csv", index=False)

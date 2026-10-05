@@ -1,0 +1,67 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+cat_cols = ["job","marital","education","default","housing","loan","contact","month","day_of_week","poutcome"]
+
+def prep(df):
+    df = df.copy()
+    df["age"] = df["age"].clip(lower=17)
+    df["duration"] = df["duration"].clip(lower=0)
+    df["campaign"] = df["campaign"].clip(lower=1)
+    df["prev_contacted"] = (df["pdays"] != 999).astype(int)
+    df["pdays2"] = df["pdays"].where(df["pdays"] != 999, -1)
+    df["log_dur"] = np.log1p(df["duration"])
+    df["dur_per_campaign"] = df["duration"] / df["campaign"]
+    df["euri_emp"] = df["euribor3m"] * df["nr.employed"]
+    return df
+
+Xtr = prep(train.drop(columns=["y"]))
+ytr = train["y"].values
+Xte = prep(test)
+
+for c in cat_cols:
+    cats = pd.Categorical(pd.concat([Xtr[c], Xte[c]]).astype(str)).categories
+    Xtr[c] = pd.Categorical(Xtr[c].astype(str), categories=cats)
+    Xte[c] = pd.Categorical(Xte[c].astype(str), categories=cats)
+
+# CatBoost version with string cats
+Xtr_cb = Xtr.copy(); Xte_cb = Xte.copy()
+for c in cat_cols:
+    Xtr_cb[c] = Xtr_cb[c].astype(str)
+    Xte_cb[c] = Xte_cb[c].astype(str)
+
+lgb_params = dict(n_estimators=400, learning_rate=0.03, num_leaves=31, min_child_samples=30,
+                  subsample=0.8, subsample_freq=1, colsample_bytree=0.7, reg_lambda=2.0,
+                  random_state=42, verbose=-1, n_jobs=-1)
+cb_params = dict(iterations=600, learning_rate=0.05, depth=6, random_seed=42, verbose=0,
+                 cat_features=cat_cols, thread_count=-1)
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+oof_l = np.zeros(len(Xtr)); oof_c = np.zeros(len(Xtr))
+for tr, va in skf.split(Xtr, ytr):
+    m = lgb.LGBMClassifier(**lgb_params).fit(Xtr.iloc[tr], ytr[tr])
+    oof_l[va] = m.predict_proba(Xtr.iloc[va])[:, 1]
+    m = CatBoostClassifier(**cb_params).fit(Xtr_cb.iloc[tr], ytr[tr])
+    oof_c[va] = m.predict_proba(Xtr_cb.iloc[va])[:, 1]
+
+oof = 0.5 * oof_l + 0.5 * oof_c
+best_t, best_f = 0.5, 0
+for t in np.arange(0.1, 0.7, 0.01):
+    f = f1_score(ytr, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("OOF F1", best_f, "threshold", best_t)
+
+m1 = lgb.LGBMClassifier(**lgb_params).fit(Xtr, ytr)
+m2 = CatBoostClassifier(**cb_params).fit(Xtr_cb, ytr)
+proba = 0.5 * m1.predict_proba(Xte)[:, 1] + 0.5 * m2.predict_proba(Xte_cb)[:, 1]
+label = (proba >= best_t).astype(int)
+
+pd.DataFrame({"proba": proba, "label": label}).to_csv("predictions.csv", index=False)

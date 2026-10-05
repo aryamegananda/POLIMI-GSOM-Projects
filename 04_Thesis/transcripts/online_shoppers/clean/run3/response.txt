@@ -1,0 +1,103 @@
+```python
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.linear_model import LogisticRegression
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+SEED = 42
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["Revenue"].astype(int).values
+X = train.drop(columns=["Revenue"])
+Xt = test.copy()
+
+month_map = {"Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "June": 6, "Jun": 6,
+             "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12}
+
+def prep(df):
+    df = df.copy()
+    df["Weekend"] = df["Weekend"].astype(str).str.lower().isin(["true", "1"]).astype(int)
+    df["MonthNum"] = df["Month"].map(month_map).fillna(0)
+    df["VisitorType"] = df["VisitorType"].astype(str)
+    df["TotalPages"] = df["Administrative"] + df["Informational"] + df["ProductRelated"]
+    df["TotalDuration"] = df["Administrative_Duration"] + df["Informational_Duration"] + df["ProductRelated_Duration"]
+    df["AvgProdDur"] = df["ProductRelated_Duration"] / (df["ProductRelated"] + 1)
+    df["AvgTotDur"] = df["TotalDuration"] / (df["TotalPages"] + 1)
+    df["PV_log"] = np.log1p(df["PageValues"])
+    df["PV_Exit"] = df["PageValues"] * (1 - df["ExitRates"])
+    df["Bounce_Exit"] = df["BounceRates"] + df["ExitRates"]
+    return df
+
+X = prep(X)
+Xt = prep(Xt)
+
+cat_cols = ["Month", "VisitorType"]
+# Version for LGB / CatBoost
+Xl = X.copy(); Xtl = Xt.copy()
+for c in cat_cols:
+    cats = pd.Categorical(pd.concat([X[c], Xt[c]])).categories
+    Xl[c] = pd.Categorical(X[c], categories=cats)
+    Xtl[c] = pd.Categorical(Xt[c], categories=cats)
+
+# Version for logistic (one-hot)
+def onehot(df):
+    d = pd.get_dummies(df, columns=cat_cols + ["TrafficType", "Region", "Browser", "OperatingSystems"], dtype=float)
+    return d
+allo = onehot(pd.concat([X, Xt], keys=["a", "b"]))
+Xo, Xto = allo.loc["a"].copy(), allo.loc["b"].copy()
+for c in ["Administrative_Duration", "Informational_Duration", "ProductRelated_Duration", "PageValues",
+          "ProductRelated", "Administrative", "Informational", "TotalPages", "TotalDuration",
+          "AvgProdDur", "AvgTotDur"]:
+    Xo[c] = np.log1p(Xo[c]); Xto[c] = np.log1p(Xto[c])
+mu, sd = Xo.mean(), Xo.std().replace(0, 1)
+Xo = (Xo - mu) / sd; Xto = (Xto - mu) / sd
+
+cb_cat = [Xl.columns.get_loc(c) for c in cat_cols]
+Xc = Xl.copy(); Xtc = Xtl.copy()
+for c in cat_cols:
+    Xc[c] = Xc[c].astype(str); Xtc[c] = Xtc[c].astype(str)
+
+def fit_pred(tr, va_list):
+    """Train 3 models on index tr; return averaged probs for each (X-set) in va_list: list of (idx or None)."""
+    pass
+
+lgb_params = dict(n_estimators=400, learning_rate=0.02, num_leaves=15, min_child_samples=30,
+                  subsample=0.8, subsample_freq=1, colsample_bytree=0.7, reg_lambda=5,
+                  random_state=SEED, verbose=-1, n_jobs=4)
+
+def models_predict(tr_idx, targets):
+    """targets: list of tuples (Xl, Xc, Xo) frames to predict. Returns list of averaged probs."""
+    m1 = lgb.LGBMClassifier(**lgb_params).fit(Xl.iloc[tr_idx], y[tr_idx])
+    m2 = CatBoostClassifier(iterations=600, learning_rate=0.03, depth=6, random_seed=SEED,
+                            verbose=0, cat_features=cb_cat, thread_count=4)
+    m2.fit(Xc.iloc[tr_idx], y[tr_idx])
+    m3 = LogisticRegression(C=0.3, max_iter=2000, random_state=SEED).fit(Xo.iloc[tr_idx], y[tr_idx])
+    outs = []
+    for (a, b, c) in targets:
+        p = 0.4 * m1.predict_proba(a)[:, 1] + 0.45 * m2.predict_proba(b)[:, 1] + 0.15 * m3.predict_proba(c)[:, 1]
+        outs.append(p)
+    return outs
+
+# OOF for threshold selection
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+oof = np.zeros(len(X))
+test_p = np.zeros(len(Xt))
+for tr, va in skf.split(X, y):
+    pv, pt = models_predict(tr, [(Xl.iloc[va], Xc.iloc[va], Xo.iloc[va]), (Xtl, Xtc, Xto)])
+    oof[va] = pv
+    test_p += pt / skf.n_splits
+
+best_t, best_f = 0.5, 0
+for t in np.arange(0.15, 0.7, 0.01):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "OOF F1", best_f)
+
+out = pd.DataFrame({"proba": np.clip(test_p, 0, 1), "label": (test_p >= best_t).astype(int)})
+out.to_csv("predictions.csv", index=False)
+```
