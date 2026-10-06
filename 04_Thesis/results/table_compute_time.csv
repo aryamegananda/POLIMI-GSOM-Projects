@@ -1,0 +1,5 @@
+pipeline,median,mean,max
+AutoML,304.4,305.9,320.9
+Hybrid,315.4,324.2,416.7
+Manual,23.2,29.8,95.0
+LLM,23.7,67.3,228.5
