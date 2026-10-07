@@ -26,6 +26,17 @@ DATASETS = {
         "continuous": ["age", "campaign", "pdays", "previous", "emp.var.rate",
                        "cons.price.idx", "cons.conf.idx", "euribor3m", "nr.employed"],
         "codes": [],
+        "bounds": {
+            "age": (17, None),
+            "campaign": (1, None),
+            "pdays": (0, 999),
+            "previous": (0, None),
+            "emp.var.rate": (None, None),
+            "cons.price.idx": (0, None),
+            "cons.conf.idx": (None, None),
+            "euribor3m": (None, None),
+            "nr.employed": (0, None),
+        },
     },
     "online_shoppers": {
         "file": "data/raw/online_shoppers_intention.csv",
@@ -58,6 +69,19 @@ DATASETS = {
                        "PAY_AMT1", "PAY_AMT2", "PAY_AMT3", "PAY_AMT4", "PAY_AMT5", "PAY_AMT6"],
         "codes": ["SEX", "EDUCATION", "MARRIAGE",
                   "PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6"],
+        "bounds": {
+            "LIMIT_BAL": (0, None),
+            "AGE": (18, None),
+            "BILL_AMT1": (None, None), "BILL_AMT2": (None, None), "BILL_AMT3": (None, None),
+            "BILL_AMT4": (None, None), "BILL_AMT5": (None, None), "BILL_AMT6": (None, None),
+            "PAY_AMT1": (0, None), "PAY_AMT2": (0, None), "PAY_AMT3": (0, None),
+            "PAY_AMT4": (0, None), "PAY_AMT5": (0, None), "PAY_AMT6": (0, None),
+            "SEX": (1, 2),
+            "EDUCATION": (0, 6),
+            "MARRIAGE": (0, 3),
+            "PAY_0": (-2, 9), "PAY_2": (-2, 9), "PAY_3": (-2, 9),
+            "PAY_4": (-2, 9), "PAY_5": (-2, 9), "PAY_6": (-2, 9),
+        },
     },
 }
 
