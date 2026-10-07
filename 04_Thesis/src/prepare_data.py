@@ -82,7 +82,8 @@ def encode_target(df, target):
 
 def inject_per_column(train_df, cols, pct, puck_function, name):
     degraded = train_df.copy()
-    for col in cols:
+    for j, col in enumerate(cols):
+        set_seed(SEED + j)
         strategy = {
             "affected_features": [col],
             "selection_criteria": "all",
@@ -117,7 +118,6 @@ def apply_degradation(train_df, target, deg_type, pct, continuous, codes):
 
     else:
         return train_df.copy()
-
 
 def share_rows_with_nan(df, cols):
     count = 0
@@ -191,8 +191,15 @@ def main():
             if cond["type"] == "missing":
                 cols = ds_info["continuous"] + ds_info["codes"]
                 pct_rows = share_rows_with_nan(degraded, cols)
-                print(f"    Rows with missing values: {pct_rows:.2%}")
+                print(f"Rows with missing values: {pct_rows:.2%}")
                 share_nan_per_column(degraded, cols)
+
+            elif cond["type"] == "outlier":
+                cols = ds_info["continuous"]
+                changed = degraded[cols] != train_df[cols]
+                print(f"Rows with outliers: {changed.any(axis=1).mean():.2%}")
+                for col in cols:
+                    print(f"{col}: {changed[col].mean():.2%}")
           
             elif cond["type"] == "noise":
                 flipped = (degraded[target] != train_df[target]).mean()
