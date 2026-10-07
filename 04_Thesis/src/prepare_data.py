@@ -7,10 +7,13 @@ from pucktrick.outliers import outlier
 from pucktrick.labels import labels
 from pandas.api.types import is_bool_dtype, is_numeric_dtype
 import os
+import random
 
 # 1. Config
 SEED = 42
-np.random.seed(SEED)
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
 
 # 2. Dataset
 DATASETS = {
@@ -18,16 +21,34 @@ DATASETS = {
         "file": "data/raw/bank-additional-full.csv",
         "sep": ";",
         "target": "y",
+        "drop": ["duration"],
+        "bool_to_int": [],
+        "continuous": ["age", "campaign", "pdays", "previous", "emp.var.rate",
+                       "cons.price.idx", "cons.conf.idx", "euribor3m", "nr.employed"],
+        "codes": [],
     },
     "online_shoppers": {
         "file": "data/raw/online_shoppers_intention.csv",
         "sep": ",",
         "target": "Revenue",
+        "drop": [],
+        "bool_to_int": ["Weekend"],
+        "continuous": ["Administrative", "Administrative_Duration", "Informational",
+                       "Informational_Duration", "ProductRelated", "ProductRelated_Duration",
+                       "BounceRates", "ExitRates", "PageValues", "SpecialDay"],
+        "codes": ["OperatingSystems", "Browser", "Region", "TrafficType", "Weekend"],
     },
     "credit_card": {
         "file": "data/raw/UCI_Credit_Card.csv",
         "sep": ",",
         "target": "default.payment.next.month",
+        "drop": ["ID"],
+        "bool_to_int": [],
+        "continuous": ["LIMIT_BAL", "AGE",
+                       "BILL_AMT1", "BILL_AMT2", "BILL_AMT3", "BILL_AMT4", "BILL_AMT5", "BILL_AMT6",
+                       "PAY_AMT1", "PAY_AMT2", "PAY_AMT3", "PAY_AMT4", "PAY_AMT5", "PAY_AMT6"],
+        "codes": ["SEX", "EDUCATION", "MARRIAGE",
+                  "PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6"],
     },
 }
 
@@ -59,30 +80,27 @@ def encode_target(df, target):
     assert set(df[target].unique()) <= {0, 1}, f"Target '{target}' is not binary"
     return df
 
-def apply_degradation(train_df, target, deg_type, pct):
-    num_cols = train_df.select_dtypes(include="number").columns.tolist()
-    if target in num_cols:
-        num_cols.remove(target)
-
-    if deg_type == "missing":
+def inject_per_column(train_df, cols, pct, puck_function, name):
+    degraded = train_df.copy()
+    for col in cols:
         strategy = {
-            "affected_features": num_cols,
+            "affected_features": [col],
             "selection_criteria": "all",
             "percentage": pct,
             "mode": "new",
             "perturbate_data": {"sampling": "random"},
         }
-        err, degraded = missing(train_df, strategy)
+        err, degraded = puck_function(degraded, strategy)
+        if err != 0:
+           raise RuntimeError(f"PuckTrick returned err={err} for {name} in column {col}")
+    return degraded         
+
+def apply_degradation(train_df, target, deg_type, pct, continuous, codes):
+    if deg_type == "missing":
+        return inject_per_column(train_df, continuous + codes, pct, missing, "missing")
 
     elif deg_type == "outlier":
-        strategy = {
-            "affected_features": num_cols,
-            "selection_criteria": "all",
-            "percentage": pct,
-            "mode": "new",
-            "perturbate_data": {"sampling": "random"},
-        }
-        err, degraded = outlier(train_df, strategy)
+        return inject_per_column(train_df, continuous, pct, outlier, "outlier")
 
     elif deg_type == "noise":
         strategy = {
@@ -93,12 +111,26 @@ def apply_degradation(train_df, target, deg_type, pct):
             "perturbate_data": {"sampling": "random"},
         }
         err, degraded = labels(train_df, strategy)
+        if err !=  0:
+            raise RuntimeError(f"PuckTrick returned err={err} for noise")
+        return degraded
 
     else:
-        degraded = train_df.copy()
+        return train_df.copy()
 
-    return degraded
 
+def share_rows_with_nan(df, cols):
+    count = 0
+    for i in range(len(df)):
+        row = df[cols].iloc[i]
+        if row.isna().any():
+            count += 1
+    return count / len(df)
+
+def share_nan_per_column(df, cols):
+    for col in cols:
+        share = df[col].isna().mean()
+        print(f"{col}: {share:.2%}")
 
 def main():
     for ds_name, ds_info in DATASETS.items():
@@ -110,6 +142,16 @@ def main():
         df = pd.read_csv(ds_info["file"], sep=ds_info["sep"])
         target = ds_info["target"]
         df = encode_target(df, target)
+
+        for col in ds_info["drop"]:
+            df = df.drop(columns=col)
+
+        for col in ds_info["bool_to_int"]:
+            df[col] = df[col].astype(int)
+
+        for col in ds_info["continuous"] + ds_info["codes"]:
+            if col not in df.columns:
+                raise ValueError(f"{ds_name}: column '{col}' not found")
 
         print(f"  Shape: {df.shape}")
         print(f"  Target balance: {df[target].value_counts(normalize=True).round(3).to_dict()}")
@@ -136,8 +178,9 @@ def main():
                 continue
 
             print(f"\n  Condition: {cond_name} ({cond['type']} @ {cond['pct']:.0%})")
+            set_seed(SEED)
             degraded = apply_degradation(
-                train_df.copy(), target, cond["type"], cond["pct"]
+                train_df.copy(), target, cond["type"], cond["pct"], ds_info["continuous"], ds_info["codes"]
             )
 
             out_dir = f"data/messy/{ds_name}/{cond_name}"
@@ -146,13 +189,16 @@ def main():
 
             # Quick validation
             if cond["type"] == "missing":
-                pct_actual = degraded[degraded.columns.difference([target])].isnull().mean().mean()
-                print(f"    Actual missing rate: {pct_actual:.2%}")
+                cols = ds_info["continuous"] + ds_info["codes"]
+                pct_rows = share_rows_with_nan(degraded, cols)
+                print(f"    Rows with missing values: {pct_rows:.2%}")
+                share_nan_per_column(degraded, cols)
+          
             elif cond["type"] == "noise":
                 flipped = (degraded[target] != train_df[target]).mean()
-                print(f"    Actual label flip rate: {flipped:.2%}")
+                print(f"Actual label flip rate: {flipped:.2%}")
 
-        print(f"\n  ✓ Done: {ds_name}")
+        print(f"\nDone: {ds_name}")
 
     print(f"\n{'='*60}")
     print("  ALL DATASETS PREPARED")
