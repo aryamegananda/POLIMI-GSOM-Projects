@@ -37,6 +37,15 @@ DATASETS = {
                        "Informational_Duration", "ProductRelated", "ProductRelated_Duration",
                        "BounceRates", "ExitRates", "PageValues", "SpecialDay"],
         "codes": ["OperatingSystems", "Browser", "Region", "TrafficType", "Weekend"],
+        "bounds": {
+            "Administrative": (0, None), "Administrative_Duration": (0, None),
+            "Informational": (0, None), "Informational_Duration": (0, None),
+            "ProductRelated": (0, None), "ProductRelated_Duration": (0, None),
+            "BounceRates": (0, 1), "ExitRates": (0, 1),
+            "PageValues": (0, None), "SpecialDay": (0, 1),
+            "OperatingSystems": (1, None), "Browser": (1, None),
+            "Region": (1, None), "TrafficType": (1, None), "Weekend": (0, 1),
+        },
     },
     "credit_card": {
         "file": "data/raw/UCI_Credit_Card.csv",
