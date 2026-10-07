@@ -1,15 +1,3 @@
-"""
-Output structure:
-  data/processed/<dataset>/test.csv              (shared clean test set)
-  data/messy/<dataset>/clean/train.csv            (clean baseline)
-  data/messy/<dataset>/missing_mild/train.csv     (10% missing)
-  data/messy/<dataset>/missing_severe/train.csv   (20% missing)
-  data/messy/<dataset>/outlier_mild/train.csv     (5% outliers)
-  data/messy/<dataset>/outlier_severe/train.csv   (15% outliers)
-  data/messy/<dataset>/noise_mild/train.csv       (5% label noise)
-  data/messy/<dataset>/noise_severe/train.csv     (20% label noise)
-"""
-
 # 0. Import
 import pandas as pd
 import numpy as np
@@ -17,6 +5,7 @@ from sklearn.model_selection import train_test_split
 from pucktrick.missing import missing
 from pucktrick.outliers import outlier
 from pucktrick.labels import labels
+from pandas.api.types import is_bool_dtype, is_numeric_dtype
 import os
 
 # 1. Config
@@ -57,10 +46,9 @@ CONDITIONS = {
 def encode_target(df, target):
     s = df[target]
 
-    if pd.api.types.is_bool_dtype(s) or pd.api.types.is_numeric_dtype(s):
+    if is_bool_dtype(s) or is_numeric_dtype(s):
         df[target] = s.astype(int)
     else:
-        # covers object, category, and pandas 3.x "str"/StringDtype
         s = s.astype(str).str.strip().str.lower()
         mapping = {"yes": 1, "no": 0, "true": 1, "false": 0}
         unknown = set(s.unique()) - set(mapping)
@@ -70,7 +58,6 @@ def encode_target(df, target):
 
     assert set(df[target].unique()) <= {0, 1}, f"Target '{target}' is not binary"
     return df
-
 
 def apply_degradation(train_df, target, deg_type, pct):
     num_cols = train_df.select_dtypes(include="number").columns.tolist()
@@ -146,7 +133,7 @@ def main():
         # Generate degraded conditions
         for cond_name, cond in CONDITIONS.items():
             if cond["type"] is None:
-                continue  # already saved clean
+                continue
 
             print(f"\n  Condition: {cond_name} ({cond['type']} @ {cond['pct']:.0%})")
             degraded = apply_degradation(
