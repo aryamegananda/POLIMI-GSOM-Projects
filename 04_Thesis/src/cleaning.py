@@ -6,54 +6,14 @@ from sklearn.impute import IterativeImputer
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from cleanlab.filter import find_label_issues
+import sys
+sys.path.append("../src")
+from prepare_data import DATASETS
 
 
 # 1. Functions
 # 1a. Outliers Handling
-VALIDITY_RULES = {
-    "bank_marketing": {
-        "age":      (17, 100),
-        "duration": (0, None),
-        "campaign": (1, None),
-        "pdays":    (0, 999),
-        "previous": (0, None),
-    },
-    "online_shoppers": {
-        "Administrative": (0, None),
-        "Informational": (0, None),
-        "ProductRelated": (0, None),
-        "Administrative_Duration": (0, None),
-        "Informational_Duration": (0, None),
-        "ProductRelated_Duration": (0, None),
-        "BounceRates": (0, 1),
-        "ExitRates": (0, 1),
-        "PageValues": (0, None),
-        "SpecialDay": (0, 1),
-        "OperatingSystems": (1, None),
-        "Browser": (1, None),
-        "Region": (1, None),
-        "TrafficType": (1, None),
-    },
-    "credit_card": {
-        "LIMIT_BAL": (0, None),
-        "SEX": (1, 2),
-        "EDUCATION": (0, 6),
-        "MARRIAGE": (0, 3),
-        "AGE": (18, 100),
-        "PAY_0": (-2, 9),
-        "PAY_2": (-2, 9),
-        "PAY_3": (-2, 9),
-        "PAY_4": (-2, 9),
-        "PAY_5": (-2, 9),
-        "PAY_6": (-2, 9),
-        "PAY_AMT1": (0, None),
-        "PAY_AMT2": (0, None),
-        "PAY_AMT3": (0, None),
-        "PAY_AMT4": (0, None),
-        "PAY_AMT5": (0, None),
-        "PAY_AMT6": (0, None),
-    },
-}
+
 
 def validity_check(train, rules):
     train = train.copy()
@@ -85,8 +45,7 @@ def clean_missing(train, target):
     if train[num_cols].isnull().sum().sum() == 0:
         return train
 
-    # categoricals as one-hot, so MICE can use them as predictors
-    # (needed because PuckTrick removes all numeric values of a row together)
+    # categoricals one-hot encoded so MICE can use them as extra information
     X = pd.get_dummies(train[num_cols + cat_cols], columns=cat_cols, dtype=float)
 
     imputer = IterativeImputer(max_iter=10, random_state=42)
@@ -111,27 +70,90 @@ def handle_label_noise(train, target):
     pred_probs = cross_val_predict(model, X, y, cv=cv, method="predict_proba")
 
     # True = label probably wrong
-    issues = find_label_issues(labels=y, pred_probs=pred_probs)
+    issues = find_label_issues(labels=y, pred_probs=pred_probs, frac_noise=0.5)
 
     train = train[~issues].reset_index(drop=True)
     return train
 
-
 # 1d. Clean
-def clean_all(train, target, rules):
+def fix_imputed_values(train, codes, bounds):
+    train = train.copy()
+    for col in codes:
+        train[col] = train[col].round()
+    for col in bounds:
+        lo, hi = bounds[col]
+        train[col] = train[col].clip(lower=lo, upper=hi)
+    return train
+
+# 1e. Clean
+def clean_all(train, ds_name):
+    info = DATASETS[ds_name]
+    target = info["target"]
+    bounds = info["bounds"]
+    codes = info["codes"]
+
     report = {}
     report["rows_before"] = len(train)
-    nan_before = train.isnull().sum().sum()
+    report["pos_rate_before"] = round(train[target].mean(), 4)
+    nan_before = int(train.isnull().sum().sum())
 
-    train = validity_check(train, rules)
+    train = validity_check(train, bounds)
     report["values_invalid"] = int(train.isnull().sum().sum() - nan_before)
     report["values_imputed"] = int(train.isnull().sum().sum())
 
     train = clean_missing(train, target)
+    train = fix_imputed_values(train, codes, bounds)
 
     rows_before_noise = len(train)
     train = handle_label_noise(train, target)
     report["rows_removed_label_noise"] = rows_before_noise - len(train)
     report["rows_after"] = len(train)
+    report["pos_rate_after"] = round(train[target].mean(), 4)
 
     return train, report
+
+
+# 2. Run
+def main():
+    import os
+    from prepare_data import CONDITIONS
+
+    report_rows = []
+    for ds_name, info in DATASETS.items():
+        print(f"\n{'=' * 60}\n{ds_name.upper()}\n{'=' * 60}")
+
+        for cond in CONDITIONS:
+            train = pd.read_csv(f"data/messy/{ds_name}/{cond}/train.csv")
+            cleaned, report = clean_all(train, ds_name)
+
+            out_dir = f"data/cleaned/{ds_name}/{cond}"
+            os.makedirs(out_dir, exist_ok=True)
+            cleaned.to_csv(f"{out_dir}/train.csv", index=False)
+
+            # checks
+            nan_left = int(cleaned.isnull().sum().sum())
+            bound_breaks = 0
+            for col in info["bounds"]:
+                lo, hi = info["bounds"][col]
+                if lo is not None:
+                    bound_breaks += int((cleaned[col] < lo).sum())
+                if hi is not None:
+                    bound_breaks += int((cleaned[col] > hi).sum())
+            decimal_codes = 0
+            for col in info["codes"]:
+                decimal_codes += int((cleaned[col] != cleaned[col].round()).sum())
+
+            print(f"\n  {cond}: {report}")
+            print(f"    NaN left: {nan_left} | bound breaks: {bound_breaks} | decimal codes: {decimal_codes}")
+
+            report["dataset"] = ds_name
+            report["condition"] = cond
+            report_rows.append(report)
+
+    os.makedirs("results", exist_ok=True)
+    pd.DataFrame(report_rows).to_csv("results/cleaning_report.csv", index=False)
+    print("\nSaved results/cleaning_report.csv")
+
+
+if __name__ == "__main__":
+    main()
