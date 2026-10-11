@@ -1,0 +1,71 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+
+TARGET = "default.payment.next.month"
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+
+def fe(df):
+    d = df.copy()
+    pays = ["PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6"]
+    bills = [f"BILL_AMT{i}" for i in range(1, 7)]
+    pamts = [f"PAY_AMT{i}" for i in range(1, 7)]
+    d["EDUCATION"] = d["EDUCATION"].replace({0: 4, 5: 4, 6: 4})
+    d["MARRIAGE"] = d["MARRIAGE"].replace({0: 3})
+    d["pay_mean"] = d[pays].mean(axis=1)
+    d["pay_max"] = d[pays].max(axis=1)
+    d["pay_sum_pos"] = d[pays].clip(lower=0).sum(axis=1)
+    d["pay_n_late"] = (d[pays] > 0).sum(axis=1)
+    d["bill_mean"] = d[bills].mean(axis=1)
+    d["pamt_mean"] = d[pamts].mean(axis=1)
+    d["pamt_sum"] = d[pamts].sum(axis=1)
+    d["util1"] = d["BILL_AMT1"] / d["LIMIT_BAL"]
+    d["util_mean"] = d["bill_mean"] / d["LIMIT_BAL"]
+    d["pay_ratio"] = d["pamt_sum"] / (d[bills].clip(lower=0).sum(axis=1) + 1)
+    for i in range(1, 6):
+        d[f"ratio{i}"] = d[f"PAY_AMT{i}"] / (d[f"BILL_AMT{i+1}"].clip(lower=0) + 1)
+    d["bill_trend"] = d["BILL_AMT1"] - d["BILL_AMT6"]
+    d["limit_per_age"] = d["LIMIT_BAL"] / d["AGE"]
+    return d
+
+
+X = fe(train.drop(columns=[TARGET]))
+y = train[TARGET].values
+Xt = fe(test)[X.columns]
+
+params = dict(n_estimators=400, learning_rate=0.02, num_leaves=15, min_child_samples=50,
+              subsample=0.8, subsample_freq=1, colsample_bytree=0.6, reg_lambda=5.0,
+              random_state=42, verbose=-1, n_jobs=-1)
+
+skf = StratifiedKFold(5, shuffle=True, random_state=42)
+oof = np.zeros(len(X))
+tp = np.zeros(len(Xt))
+for tr, va in skf.split(X, y):
+    m = lgb.LGBMClassifier(**params)
+    m.fit(X.iloc[tr], y[tr])
+    p1 = m.predict_proba(X.iloc[va])[:, 1]
+    tp1 = m.predict_proba(Xt)[:, 1]
+
+    lr = make_pipeline(StandardScaler(), LogisticRegression(C=0.1, max_iter=2000, random_state=42))
+    Xl = np.sign(X) * np.log1p(np.abs(X))
+    Xtl = np.sign(Xt) * np.log1p(np.abs(Xt))
+    lr.fit(Xl.iloc[tr], y[tr])
+    p2 = lr.predict_proba(Xl.iloc[va])[:, 1]
+    tp2 = lr.predict_proba(Xtl)[:, 1]
+
+    oof[va] = 0.8 * p1 + 0.2 * p2
+    tp += (0.8 * tp1 + 0.2 * tp2) / 5
+
+ths = np.arange(0.15, 0.7, 0.01)
+f1s = [f1_score(y, (oof >= t).astype(int)) for t in ths]
+best = ths[int(np.argmax(f1s))]
+print("best threshold", best, "oof f1", max(f1s))
+
+pd.DataFrame({"proba": tp, "label": (tp >= best).astype(int)}).to_csv("predictions.csv", index=False)

@@ -1,0 +1,104 @@
+```python
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from sklearn.impute import SimpleImputer
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+TARGET = "default.payment.next.month"
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train[TARGET].astype(int).values
+Xtr = train.drop(columns=[TARGET])
+Xte = test[Xtr.columns]
+
+pay = ["PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6"]
+bill = [f"BILL_AMT{i}" for i in range(1, 7)]
+pam = [f"PAY_AMT{i}" for i in range(1, 7)]
+
+
+def fe(df):
+    d = df.copy()
+    d["pay_mean"] = d[pay].mean(axis=1)
+    d["pay_max"] = d[pay].max(axis=1)
+    d["pay_min"] = d[pay].min(axis=1)
+    d["pay_pos_cnt"] = (d[pay] > 0).sum(axis=1)
+    d["pay_nan_cnt"] = d[pay].isna().sum(axis=1)
+    d["bill_mean"] = d[bill].mean(axis=1)
+    d["bill_max"] = d[bill].max(axis=1)
+    d["pamt_mean"] = d[pam].mean(axis=1)
+    d["pamt_sum"] = d[pam].sum(axis=1)
+    d["bill_sum"] = d[bill].sum(axis=1)
+    d["pay_ratio"] = d["pamt_sum"] / (d["bill_sum"].abs() + 1)
+    d["util1"] = d["BILL_AMT1"] / (d["LIMIT_BAL"] + 1)
+    d["util_mean"] = d["bill_mean"] / (d["LIMIT_BAL"] + 1)
+    d["bill_trend"] = d["BILL_AMT1"] - d["BILL_AMT6"]
+    for i in range(1, 6):
+        d[f"diff{i}"] = d[f"BILL_AMT{i+1}"] - d[f"PAY_AMT{i}"] - d[f"BILL_AMT{i}"]
+    d["pay1_ratio"] = d["PAY_AMT1"] / (d["BILL_AMT2"].abs() + 1)
+    d["pay2_ratio"] = d["PAY_AMT2"] / (d["BILL_AMT3"].abs() + 1)
+    return d
+
+
+Xtr = fe(Xtr)
+Xte = fe(Xte)
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+models = ["lgb", "cat", "lr"]
+oof = {m: np.zeros(len(Xtr)) for m in models}
+tp = {m: np.zeros(len(Xte)) for m in models}
+
+
+def make(m):
+    if m == "lgb":
+        return lgb.LGBMClassifier(n_estimators=400, learning_rate=0.02, num_leaves=15,
+                                  min_child_samples=40, subsample=0.8, subsample_freq=1,
+                                  colsample_bytree=0.6, reg_lambda=5, random_state=42,
+                                  verbose=-1, n_jobs=-1)
+    if m == "cat":
+        return CatBoostClassifier(iterations=600, learning_rate=0.04, depth=6,
+                                  random_seed=42, verbose=0, thread_count=-1)
+    return make_pipeline(SimpleImputer(strategy="median"), StandardScaler(),
+                         LogisticRegression(C=0.5, max_iter=2000))
+
+
+Xtr_lr = Xtr.copy()
+Xte_lr = Xte.copy()
+# robust transform for linear model
+for c in bill + pam + ["bill_mean", "bill_max", "pamt_mean", "pamt_sum", "bill_sum",
+                       "bill_trend", "LIMIT_BAL"] + [f"diff{i}" for i in range(1, 6)]:
+    Xtr_lr[c] = np.sign(Xtr_lr[c]) * np.log1p(Xtr_lr[c].abs())
+    Xte_lr[c] = np.sign(Xte_lr[c]) * np.log1p(Xte_lr[c].abs())
+for c in ["pay_ratio", "pay1_ratio", "pay2_ratio", "util1", "util_mean"]:
+    Xtr_lr[c] = Xtr_lr[c].clip(-10, 10)
+    Xte_lr[c] = Xte_lr[c].clip(-10, 10)
+
+for tr, va in skf.split(Xtr, y):
+    for m in models:
+        A, B = (Xtr_lr, Xte_lr) if m == "lr" else (Xtr, Xte)
+        mdl = make(m)
+        mdl.fit(A.iloc[tr], y[tr])
+        oof[m][va] = mdl.predict_proba(A.iloc[va])[:, 1]
+        tp[m] += mdl.predict_proba(B)[:, 1] / skf.n_splits
+
+w = {"lgb": 0.4, "cat": 0.45, "lr": 0.15}
+oof_b = sum(w[m] * oof[m] for m in models)
+te_b = sum(w[m] * tp[m] for m in models)
+
+best_t, best_f = 0.35, 0
+for t in np.arange(0.15, 0.7, 0.005):
+    f = f1_score(y, (oof_b >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "oof F1", best_f)
+
+out = pd.DataFrame({"proba": np.clip(te_b, 0, 1),
+                    "label": (te_b >= best_t).astype(int)})
+out.to_csv("predictions.csv", index=False)
+```

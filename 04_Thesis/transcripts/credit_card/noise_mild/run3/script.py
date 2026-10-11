@@ -1,0 +1,80 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+TARGET = "default.payment.next.month"
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+def fe(df):
+    df = df.copy()
+    pays = ["PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6"]
+    bills = [f"BILL_AMT{i}" for i in range(1, 7)]
+    amts = [f"PAY_AMT{i}" for i in range(1, 7)]
+    df["PAY_MAX"] = df[pays].max(axis=1)
+    df["PAY_MEAN"] = df[pays].mean(axis=1)
+    df["PAY_SUM"] = df[pays].clip(lower=0).sum(axis=1)
+    df["PAY_NLATE"] = (df[pays] > 0).sum(axis=1)
+    df["BILL_MEAN"] = df[bills].mean(axis=1)
+    df["PAYAMT_MEAN"] = df[amts].mean(axis=1)
+    df["PAYAMT_SUM"] = df[amts].sum(axis=1)
+    df["UTIL1"] = df["BILL_AMT1"] / df["LIMIT_BAL"]
+    df["UTIL_MEAN"] = df["BILL_MEAN"] / df["LIMIT_BAL"]
+    df["PAY_RATIO"] = df["PAYAMT_SUM"] / (df[bills].sum(axis=1).abs() + 1)
+    for i in range(1, 6):
+        df[f"RATIO{i}"] = df[f"PAY_AMT{i}"] / (df[f"BILL_AMT{i+1}"].abs() + 1)
+    df["BILL_TREND"] = df["BILL_AMT1"] - df["BILL_AMT6"]
+    df["LIMIT_PAYAMT"] = df["PAYAMT_MEAN"] / df["LIMIT_BAL"]
+    return df
+
+y = train[TARGET].values
+X = fe(train.drop(columns=[TARGET]))
+Xt = fe(test)[X.columns]
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+oof = np.zeros((len(X), 3))
+pt = np.zeros((len(Xt), 3))
+
+for tr, va in skf.split(X, y):
+    m1 = lgb.LGBMClassifier(n_estimators=400, learning_rate=0.02, num_leaves=15,
+                            min_child_samples=40, subsample=0.8, subsample_freq=1,
+                            colsample_bytree=0.6, reg_lambda=5, random_state=42,
+                            verbose=-1, n_jobs=-1)
+    m1.fit(X.iloc[tr], y[tr])
+    m2 = CatBoostClassifier(iterations=600, learning_rate=0.03, depth=6,
+                            random_seed=42, verbose=0, thread_count=-1)
+    m2.fit(X.iloc[tr], y[tr])
+    m3 = make_pipeline(StandardScaler(), LogisticRegression(C=0.5, max_iter=2000, random_state=42))
+    Xl = np.sign(X) * np.log1p(np.abs(X))
+    m3.fit(Xl.iloc[tr], y[tr])
+    Xtl = np.sign(Xt) * np.log1p(np.abs(Xt))
+    for k, m, (a, b) in enumerate([(m1, (X.iloc[va], Xt)), (m2, (X.iloc[va], Xt)),
+                                    (m3, (Xl.iloc[va], Xtl))]):
+        pass
+    oof[va, 0] = m1.predict_proba(X.iloc[va])[:, 1]
+    oof[va, 1] = m2.predict_proba(X.iloc[va])[:, 1]
+    oof[va, 2] = m3.predict_proba(Xl.iloc[va])[:, 1]
+    pt[:, 0] += m1.predict_proba(Xt)[:, 1] / 5
+    pt[:, 1] += m2.predict_proba(Xt)[:, 1] / 5
+    pt[:, 2] += m3.predict_proba(Xtl)[:, 1] / 5
+
+w = np.array([0.4, 0.5, 0.1])
+oof_p = oof @ w
+test_p = pt @ w
+
+best_t, best_f = 0.5, 0
+for t in np.arange(0.15, 0.7, 0.005):
+    f = f1_score(y, (oof_p >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "oof F1", best_f)
+
+out = pd.DataFrame({"proba": np.clip(test_p, 0, 1),
+                    "label": (test_p >= best_t).astype(int)})
+out.to_csv("predictions.csv", index=False)

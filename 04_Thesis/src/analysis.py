@@ -18,10 +18,10 @@ results = pd.concat(dfs.values())
 
 # 2. Averaging LLM result
 names = {
-    "full_auto_automl": "AutoML",
+    "automl": "AutoML",
     "hybrid": "Hybrid",
     "manual": "Manual",
-    "llm": "LLM"
+    "llm": "LLM",
 }
 
 results["pipeline"] = results["pipeline"].map(names)
@@ -36,9 +36,8 @@ print(summary.head(10))
 order = ["AutoML", "Hybrid", "Manual", "LLM"]
 
 f1_table = summary.pivot_table(index=["dataset", "condition"], columns="pipeline", values="f1")
-f1_table = f1_table[order].round(3)
-
-f1_table.to_csv("results/table_f1.csv")
+f1_table = f1_table[order]
+f1_table.round(3).to_csv("results/table_f1.csv")
 
 # 4. Friedman Test
 stat, p_value = friedmanchisquare(
@@ -58,6 +57,16 @@ nemenyi.columns = order
 print(f"\nNemenyi p-values (pairs with p<0.05 differ significantly):")
 print(nemenyi.round(3))
 nemenyi.round(4).to_csv("results/nemenyi_f1.csv")
+
+# 5b. Sensitivity: failed LLM run counted as F1 = 0
+results_sens = results.copy()
+failed = (results_sens["pipeline"] == "LLM") & (results_sens["f1"].isna())
+print(f"\nFailed LLM runs: {failed.sum()}")
+results_sens.loc[failed, "f1"] = 0.0
+f1_sens = results_sens.groupby(["pipeline", "dataset", "condition"])["f1"].mean().unstack("pipeline")[order]
+stat_s, p_s = friedmanchisquare(f1_sens["AutoML"], f1_sens["Hybrid"], f1_sens["Manual"], f1_sens["LLM"])
+print(f"Sensitivity Friedman chi-square = {stat_s:.3f}, p-value = {p_s:.4f}")
+print(f1_sens.rank(axis=1, ascending=False).mean().round(2))
 
 
 # 6. Degradation effect: F1 change vs. each pipeline's own clean baseline
@@ -114,3 +123,13 @@ print(f"\nMean std (all conditions):      {llm_std['f1_std'].mean():.4f}")
 print(f"Mean std (excl. noise_severe):  {llm_std[llm_std['condition'] != 'noise_severe']['f1_std'].mean():.4f}")
 print(f"Mean std (noise_severe only):   {llm_std[llm_std['condition'] == 'noise_severe']['f1_std'].mean():.4f}")
 llm_std.round(4).to_csv("results/table_llm_reproducibility.csv", index=False)
+
+
+# 10. AutoGluon reproducibility: |run 1 - run 2| per condition
+for p in ["AutoML", "Hybrid"]:
+    sub = results[results["pipeline"] == p]
+    wide = sub.pivot_table(index=["dataset", "condition"], columns="run", values="f1")
+    diff = (wide[1] - wide[2]).abs()
+    print(f"\n{p}: identical runs {int((diff == 0).sum())}/21, "
+          f"mean |diff| {diff.mean():.4f}, max {diff.max():.4f}")
+    diff.round(4).to_csv(f"results/table_{p.lower()}_run_diff.csv")

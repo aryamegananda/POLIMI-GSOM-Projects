@@ -1,0 +1,99 @@
+You are a data scientist. Build a complete machine learning pipeline for a
+binary classification task.
+
+## Task
+Predict the target column "default.payment.next.month" (1 = positive class, 0 = negative class).
+Your pipeline will be evaluated on the F1 score of the positive class on a
+held-out test set, so optimize for F1.
+
+## Files (in the current working directory)
+- train.csv          : training data, including the target column "default.payment.next.month"
+- test_features.csv  : test data, same columns but WITHOUT the target
+
+## Data profile (training data)
+Rows: 24000, Columns: 24
+
+Columns (type, missing %):
+- LIMIT_BAL: float64, 20.0% missing
+- SEX: float64, 20.0% missing
+- EDUCATION: float64, 20.0% missing
+- MARRIAGE: float64, 20.0% missing
+- AGE: float64, 20.0% missing
+- PAY_0: float64, 20.0% missing
+- PAY_2: float64, 20.0% missing
+- PAY_3: float64, 20.0% missing
+- PAY_4: float64, 20.0% missing
+- PAY_5: float64, 20.0% missing
+- PAY_6: float64, 20.0% missing
+- BILL_AMT1: float64, 20.0% missing
+- BILL_AMT2: float64, 20.0% missing
+- BILL_AMT3: float64, 20.0% missing
+- BILL_AMT4: float64, 20.0% missing
+- BILL_AMT5: float64, 20.0% missing
+- BILL_AMT6: float64, 20.0% missing
+- PAY_AMT1: float64, 20.0% missing
+- PAY_AMT2: float64, 20.0% missing
+- PAY_AMT3: float64, 20.0% missing
+- PAY_AMT4: float64, 20.0% missing
+- PAY_AMT5: float64, 20.0% missing
+- PAY_AMT6: float64, 20.0% missing
+- default.payment.next.month: int64, 0.0% missing
+
+Numeric summary:
+                              count        mean         std       min       25%       50%        75%        max
+LIMIT_BAL                   19200.0  167387.604  129032.810   10000.0  50000.00  140000.0  240000.00  1000000.0
+SEX                         19200.0       1.604       0.489       1.0      1.00       2.0       2.00        2.0
+EDUCATION                   19200.0       1.850       0.792       0.0      1.00       2.0       2.00        6.0
+MARRIAGE                    19200.0       1.552       0.522       0.0      1.00       2.0       2.00        3.0
+AGE                         19200.0      35.424       9.192      21.0     28.00      34.0      41.00       75.0
+PAY_0                       19200.0      -0.007       1.122      -2.0     -1.00       0.0       0.00        8.0
+PAY_2                       19200.0      -0.131       1.199      -2.0     -1.00       0.0       0.00        8.0
+PAY_3                       19200.0      -0.164       1.193      -2.0     -1.00       0.0       0.00        8.0
+PAY_4                       19200.0      -0.226       1.166      -2.0     -1.00       0.0       0.00        8.0
+PAY_5                       19200.0      -0.269       1.122      -2.0     -1.00       0.0       0.00        7.0
+PAY_6                       19200.0      -0.290       1.148      -2.0     -1.00       0.0       0.00        8.0
+BILL_AMT1                   19200.0   50968.912   73561.792 -154973.0   3576.25   22234.5   65951.75   964511.0
+BILL_AMT2                   19200.0   49041.482   71062.675  -69777.0   3025.25   21212.0   63205.25   983931.0
+BILL_AMT3                   19200.0   46820.115   67602.409  -25443.0   2612.75   20114.0   60627.75   855086.0
+BILL_AMT4                   19200.0   43214.970   64311.072  -46627.0   2355.00   19004.5   54019.25   891586.0
+BILL_AMT5                   19200.0   40297.246   60672.156  -61372.0   1735.00   18130.5   50524.00   927171.0
+BILL_AMT6                   19200.0   38876.477   59614.021 -339603.0   1221.00   17078.5   49104.50   699944.0
+PAY_AMT1                    19200.0    5613.278   16226.408       0.0   1000.00    2109.5    5020.00   873552.0
+PAY_AMT2                    19200.0    5785.376   18841.650       0.0    836.00    2008.0    5000.00  1024516.0
+PAY_AMT3                    19200.0    5222.655   18032.045       0.0    390.00    1800.0    4507.25   896040.0
+PAY_AMT4                    19200.0    4808.343   15140.363       0.0    294.00    1500.0    4012.00   621000.0
+PAY_AMT5                    19200.0    4740.861   14765.013       0.0    274.00    1516.0    4075.50   426529.0
+PAY_AMT6                    19200.0    5232.132   17892.723       0.0    106.75    1500.0    4000.00   528666.0
+default.payment.next.month  24000.0       0.221       0.415       0.0      0.00       0.0       0.00        1.0
+
+Target class balance:
+- 0: 77.9%
+- 1: 22.1%
+
+First 5 rows:
+   LIMIT_BAL  SEX  EDUCATION  MARRIAGE   AGE  PAY_0  PAY_2  PAY_3  PAY_4  PAY_5  PAY_6  BILL_AMT1  BILL_AMT2  BILL_AMT3  BILL_AMT4  BILL_AMT5  BILL_AMT6  PAY_AMT1  PAY_AMT2  PAY_AMT3  PAY_AMT4  PAY_AMT5  PAY_AMT6  default.payment.next.month
+0   160000.0  NaN        2.0       2.0  33.0    NaN    NaN    3.0    NaN    0.0    0.0   161771.0   172632.0   168541.0   164310.0   162681.0   163005.0   15000.0       0.0       NaN    6100.0   12300.0    6100.0                           0
+1   150000.0  NaN        1.0       2.0   NaN    1.0    NaN   -1.0   -2.0   -2.0   -2.0        0.0       53.0        0.0        0.0        NaN        0.0       NaN       0.0       0.0       0.0       0.0       0.0                           0
+2    10000.0  1.0        2.0       NaN   NaN    1.0    2.0    0.0    NaN    0.0    NaN    10171.0        NaN        NaN     8067.0        NaN        NaN       2.0       NaN    1134.0     294.0     305.0       NaN                           0
+3   220000.0  2.0        1.0       2.0   NaN    0.0    0.0    0.0    0.0    0.0    0.0   206879.0   211037.0        NaN   218513.0   131660.0   134346.0    9100.0    9000.0    7887.0    4800.0    4900.0    6000.0                           1
+4   310000.0  2.0        1.0       2.0  32.0    1.0   -2.0   -1.0    0.0    NaN    NaN        NaN        0.0        NaN        NaN     -235.0     -235.0       0.0     326.0       NaN       NaN       0.0    1200.0                           0
+
+## Your job
+Write ONE complete Python script that:
+1. Loads train.csv and test_features.csv
+2. Prepares the data as you see fit
+3. Trains a model on the training data
+4. Predicts the test rows and saves predictions.csv with exactly these columns:
+   - "proba": predicted probability of the positive class (between 0 and 1)
+   - "label": predicted class (0 or 1)
+   in the same row order as test_features.csv
+
+## Constraints
+- Python 3, using only: pandas, numpy, scikit-learn, scipy, lightgbm, xgboost, catboost
+- Do not use AutoML frameworks
+- No internet access; do not download anything
+- Use random_state=42 wherever randomness is involved
+- The script must finish within 15 minutes on a laptop CPU
+- This is a single attempt: you will not see any output or errors
+
+Return only the Python script, in a single ```python code block.

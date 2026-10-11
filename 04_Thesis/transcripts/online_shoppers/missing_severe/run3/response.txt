@@ -1,0 +1,98 @@
+The script below has not been run, so I haven't seen its output or any F1 score. Design choices:
+
+- **Features:** median imputation for numeric columns, plus a missing-indicator flag for each. Because 20% of values are missing, the missingness pattern may carry signal. I add a few ratio and log features, and one-hot encode Month and VisitorType.
+- **Models:** LightGBM and CatBoost on the raw data with NaNs left in, plus a HistGradientBoosting model. The final probability is the average of the three.
+- **Threshold:** I get out-of-fold probabilities with 5-fold stratified CV on the training data, then pick the threshold that maximises F1 on those predictions.
+- **Final fit:** each model is refit on the full training data and used to predict the test set.
+- **Runtime:** the models are small, so it should finish well within 15 minutes.
+
+```python
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.ensemble import HistGradientBoostingClassifier
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+SEED = 42
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["Revenue"].astype(int).values
+Xtr = train.drop(columns=["Revenue"])
+Xte = test.copy()
+
+num_cols = [c for c in Xtr.columns if c not in ("Month", "VisitorType")]
+months = ["Feb", "Mar", "May", "June", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def prep(df):
+    d = df.copy()
+    for c in num_cols:
+        d[c + "_na"] = d[c].isna().astype(int)
+    d["n_missing"] = df[num_cols].isna().sum(axis=1)
+    d["PV_log"] = np.log1p(d["PageValues"])
+    d["PR_dur_log"] = np.log1p(d["ProductRelated_Duration"])
+    d["total_dur"] = (d["Administrative_Duration"].fillna(0) + d["Informational_Duration"].fillna(0)
+                      + d["ProductRelated_Duration"].fillna(0))
+    d["total_pages"] = (d["Administrative"].fillna(0) + d["Informational"].fillna(0)
+                        + d["ProductRelated"].fillna(0))
+    d["dur_per_page"] = d["ProductRelated_Duration"] / (d["ProductRelated"] + 1)
+    d["exit_bounce"] = d["ExitRates"] - d["BounceRates"]
+    d["Month"] = d["Month"].astype(str)
+    d["VisitorType"] = d["VisitorType"].astype(str)
+    d["Month_code"] = d["Month"].map({m: i for i, m in enumerate(months)}).fillna(-1)
+    for m in sorted(set(Xtr["Month"].astype(str)) | set(Xte["Month"].astype(str))):
+        d["m_" + m] = (d["Month"] == m).astype(int)
+    for v in ["Returning_Visitor", "New_Visitor", "Other"]:
+        d["v_" + v] = (d["VisitorType"] == v).astype(int)
+    return d.drop(columns=["Month", "VisitorType"])
+
+
+A = prep(Xtr)
+B = prep(Xte)
+B = B.reindex(columns=A.columns, fill_value=0)
+A = A.astype(float)
+B = B.astype(float)
+
+
+def make_models():
+    return {
+        "lgb": lgb.LGBMClassifier(n_estimators=400, learning_rate=0.02, num_leaves=15,
+                                  min_child_samples=20, subsample=0.8, subsample_freq=1,
+                                  colsample_bytree=0.7, reg_lambda=2.0,
+                                  random_state=SEED, verbose=-1, n_jobs=4),
+        "cat": CatBoostClassifier(iterations=600, learning_rate=0.04, depth=6,
+                                  random_seed=SEED, verbose=0, thread_count=4),
+        "hgb": HistGradientBoostingClassifier(learning_rate=0.04, max_iter=300, max_leaf_nodes=15,
+                                              l2_regularization=1.0, random_state=SEED),
+    }
+
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+oof = {k: np.zeros(len(A)) for k in make_models()}
+for tr, va in skf.split(A, y):
+    ms = make_models()
+    for k, m in ms.items():
+        m.fit(A.iloc[tr], y[tr])
+        oof[k][va] = m.predict_proba(A.iloc[va])[:, 1]
+
+oof_avg = np.mean([oof[k] for k in oof], axis=0)
+best_t, best_f = 0.5, -1
+for t in np.arange(0.15, 0.7, 0.01):
+    f = f1_score(y, (oof_avg >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("OOF F1", best_f, "threshold", best_t)
+
+ms = make_models()
+preds = []
+for k, m in ms.items():
+    m.fit(A, y)
+    preds.append(m.predict_proba(B)[:, 1])
+proba = np.mean(preds, axis=0)
+label = (proba >= best_t).astype(int)
+
+pd.DataFrame({"proba": proba, "label": label}).to_csv("predictions.csv", index=False)
+```

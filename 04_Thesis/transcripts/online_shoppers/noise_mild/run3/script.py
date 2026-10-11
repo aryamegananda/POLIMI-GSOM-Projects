@@ -1,0 +1,101 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+SEED = 42
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["Revenue"].astype(int).values
+Xtr = train.drop(columns=["Revenue"])
+Xte = test.copy()
+
+month_map = {"Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "June": 6, "Jun": 6,
+             "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12}
+
+
+def prep(df):
+    df = df.copy()
+    df["Month_num"] = df["Month"].map(month_map).fillna(0)
+    df["VisitorType"] = df["VisitorType"].astype(str)
+    df["Weekend"] = df["Weekend"].astype(int)
+    df["TotalPages"] = df["Administrative"] + df["Informational"] + df["ProductRelated"]
+    df["TotalDuration"] = (df["Administrative_Duration"] + df["Informational_Duration"]
+                           + df["ProductRelated_Duration"])
+    df["AvgProdDur"] = df["ProductRelated_Duration"] / (df["ProductRelated"] + 1)
+    df["PV_log"] = np.log1p(df["PageValues"])
+    df["PV_pos"] = (df["PageValues"] > 0).astype(int)
+    df["ExitBounce"] = df["ExitRates"] - df["BounceRates"]
+    df["PV_x_Exit"] = df["PageValues"] * (1 - df["ExitRates"])
+    return df
+
+
+Xtr = prep(Xtr)
+Xte = prep(Xte)
+
+# numeric/one-hot version for lgb and LR
+def encode(df):
+    d = df.drop(columns=["Month"])
+    d = pd.get_dummies(d, columns=["VisitorType"], dtype=int)
+    return d
+
+all_enc = encode(pd.concat([Xtr, Xte], keys=["a", "b"]))
+Etr = all_enc.loc["a"].reset_index(drop=True)
+Ete = all_enc.loc["b"].reset_index(drop=True)
+Ete = Ete[Etr.columns]
+
+# catboost version
+cat_cols = ["Month", "VisitorType"]
+Ctr, Cte = Xtr.copy(), Xte.copy()
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+oof = {k: np.zeros(len(y)) for k in ["lgb", "cat", "lr"]}
+pte = {k: np.zeros(len(Xte)) for k in ["lgb", "cat", "lr"]}
+
+lgb_params = dict(n_estimators=400, learning_rate=0.03, num_leaves=15, min_child_samples=30,
+                  subsample=0.8, subsample_freq=1, colsample_bytree=0.7, reg_lambda=2.0,
+                  random_state=SEED, verbose=-1, n_jobs=-1)
+
+for tr, va in skf.split(Etr, y):
+    m = lgb.LGBMClassifier(**lgb_params)
+    m.fit(Etr.iloc[tr], y[tr])
+    oof["lgb"][va] = m.predict_proba(Etr.iloc[va])[:, 1]
+    pte["lgb"] += m.predict_proba(Ete)[:, 1] / 5
+
+    c = CatBoostClassifier(iterations=600, learning_rate=0.04, depth=6, random_seed=SEED,
+                           verbose=0, cat_features=cat_cols, thread_count=-1)
+    c.fit(Ctr.iloc[tr], y[tr])
+    oof["cat"][va] = c.predict_proba(Ctr.iloc[va])[:, 1]
+    pte["cat"] += c.predict_proba(Cte)[:, 1] / 5
+
+    l = make_pipeline(StandardScaler(), LogisticRegression(C=0.5, max_iter=2000, random_state=SEED))
+    Ltr = Etr.copy()
+    Lte = Ete.copy()
+    for col in ["Administrative_Duration", "Informational_Duration", "ProductRelated_Duration",
+                "PageValues", "ProductRelated", "TotalDuration", "TotalPages", "AvgProdDur"]:
+        Ltr[col] = np.log1p(Ltr[col])
+        Lte[col] = np.log1p(Lte[col])
+    l.fit(Ltr.iloc[tr], y[tr])
+    oof["lr"][va] = l.predict_proba(Ltr.iloc[va])[:, 1]
+    pte["lr"] += l.predict_proba(Lte)[:, 1] / 5
+
+weights = {"lgb": 0.4, "cat": 0.5, "lr": 0.1}
+oof_ens = sum(weights[k] * oof[k] for k in weights)
+te_ens = sum(weights[k] * pte[k] for k in weights)
+
+best_t, best_f = 0.5, -1
+for t in np.arange(0.15, 0.7, 0.01):
+    f = f1_score(y, (oof_ens >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "oof F1", best_f)
+
+out = pd.DataFrame({"proba": np.clip(te_ens, 0, 1),
+                    "label": (te_ens >= best_t).astype(int)})
+out.to_csv("predictions.csv", index=False)

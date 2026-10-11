@@ -1,0 +1,95 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.linear_model import LogisticRegression
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+SEED = 42
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["y"].astype(int).values
+X = train.drop(columns=["y"]).copy()
+Xt = test.copy()[X.columns]
+
+cat_cols = [c for c in X.columns if X[c].dtype == object]
+num_cols = [c for c in X.columns if c not in cat_cols]
+
+
+def fe(df):
+    df = df.copy()
+    # clean obviously noisy values
+    df["age"] = df["age"].clip(lower=17, upper=100)
+    df["campaign"] = df["campaign"].abs().clip(upper=40)
+    df["pdays_contacted"] = (df["pdays"] != 999).astype(int)
+    df["pdays2"] = df["pdays"].where(df["pdays"] != 999, -1)
+    df["rate_diff"] = df["euribor3m"] - df["emp.var.rate"]
+    df["cat_job_edu"] = df["job"] + "_" + df["education"]
+    return df
+
+
+X = fe(X)
+Xt = fe(Xt)
+cat_cols = cat_cols + ["cat_job_edu"]
+
+# LightGBM / numeric version
+X_l = X.copy()
+Xt_l = Xt.copy()
+for c in cat_cols:
+    cats = pd.Categorical(pd.concat([X[c], Xt[c]]).astype(str)).categories
+    X_l[c] = pd.Categorical(X[c].astype(str), categories=cats)
+    Xt_l[c] = pd.Categorical(Xt[c].astype(str), categories=cats)
+
+# CatBoost version
+X_c = X.copy()
+Xt_c = Xt.copy()
+for c in cat_cols:
+    X_c[c] = X_c[c].astype(str)
+    Xt_c[c] = Xt_c[c].astype(str)
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+oof_l = np.zeros(len(X))
+oof_c = np.zeros(len(X))
+pt_l = np.zeros(len(Xt))
+pt_c = np.zeros(len(Xt))
+
+lgb_params = dict(
+    n_estimators=2000, learning_rate=0.02, num_leaves=15, min_child_samples=30,
+    subsample=0.8, subsample_freq=1, colsample_bytree=0.7, reg_lambda=5.0,
+    cat_smooth=20, random_state=SEED, verbose=-1, n_jobs=-1,
+)
+
+for tr, va in skf.split(X, y):
+    m = lgb.LGBMClassifier(**lgb_params)
+    m.fit(X_l.iloc[tr], y[tr], eval_set=[(X_l.iloc[va], y[va])],
+          callbacks=[lgb.early_stopping(100, verbose=False)])
+    oof_l[va] = m.predict_proba(X_l.iloc[va])[:, 1]
+    pt_l += m.predict_proba(Xt_l)[:, 1] / skf.n_splits
+
+    cb = CatBoostClassifier(
+        iterations=1500, learning_rate=0.04, depth=6, l2_leaf_reg=5,
+        random_seed=SEED, verbose=False, thread_count=-1,
+        early_stopping_rounds=100, cat_features=cat_cols,
+    )
+    cb.fit(X_c.iloc[tr], y[tr], eval_set=(X_c.iloc[va], y[va]))
+    oof_c[va] = cb.predict_proba(X_c.iloc[va])[:, 1]
+    pt_c += cb.predict_proba(Xt_c)[:, 1] / skf.n_splits
+
+oof = 0.5 * oof_l + 0.5 * oof_c
+pt = 0.5 * pt_l + 0.5 * pt_c
+
+# choose threshold maximizing OOF F1
+best_t, best_f = 0.5, 0
+for t in np.arange(0.1, 0.8, 0.005):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "OOF F1", best_f)
+
+out = pd.DataFrame({
+    "proba": np.clip(pt, 0, 1),
+    "label": (pt >= best_t).astype(int),
+})
+out.to_csv("predictions.csv", index=False)

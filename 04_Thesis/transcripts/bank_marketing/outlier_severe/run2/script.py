@@ -1,0 +1,89 @@
+import numpy as np
+import pandas as pd
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+
+SEED = 42
+
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["y"].astype(int).values
+X_all = pd.concat([train.drop(columns=["y"]), test], axis=0, ignore_index=True)
+n_train = len(train)
+
+cat_cols = [c for c in X_all.columns if X_all[c].dtype == "object"]
+num_cols = [c for c in X_all.columns if c not in cat_cols]
+
+
+def feats(df):
+    df = df.copy()
+    df["age_bad"] = ((df["age"] < 17) | (df["age"] > 100)).astype(int)
+    df["age_clean"] = df["age"].where(df["age"] >= 17, np.nan)
+    df["campaign_neg"] = (df["campaign"] < 0).astype(int)
+    df["campaign_abs"] = df["campaign"].abs()
+    df["pdays_none"] = (df["pdays"] == 999).astype(int)
+    df["pdays_clean"] = df["pdays"].where(df["pdays"] != 999, np.nan)
+    df["emp_euribor"] = df["emp.var.rate"] * df["euribor3m"]
+    df["euribor_per_emp"] = df["euribor3m"] / (df["nr.employed"] / 5000.0)
+    df["prev_success"] = (df["poutcome"] == "success").astype(int)
+    df["job_edu"] = df["job"] + "_" + df["education"]
+    df["contact_month"] = df["contact"] + "_" + df["month"]
+    return df
+
+
+X_all = feats(X_all)
+cat_cols = [c for c in X_all.columns if X_all[c].dtype == "object"]
+
+# LightGBM version
+X_lgb = X_all.copy()
+for c in cat_cols:
+    X_lgb[c] = X_lgb[c].astype("category")
+
+# CatBoost version
+X_cb = X_all.copy()
+for c in cat_cols:
+    X_cb[c] = X_cb[c].astype(str)
+cat_idx = [X_cb.columns.get_loc(c) for c in cat_cols]
+
+Xl_tr, Xl_te = X_lgb.iloc[:n_train], X_lgb.iloc[n_train:]
+Xc_tr, Xc_te = X_cb.iloc[:n_train], X_cb.iloc[n_train:]
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+oof_l = np.zeros(n_train)
+oof_c = np.zeros(n_train)
+te_l = np.zeros(len(test))
+te_c = np.zeros(len(test))
+
+for fold, (tr, va) in enumerate(skf.split(Xl_tr, y)):
+    m = lgb.LGBMClassifier(
+        n_estimators=450, learning_rate=0.03, num_leaves=15,
+        min_child_samples=40, subsample=0.8, subsample_freq=1,
+        colsample_bytree=0.7, reg_lambda=5.0, cat_smooth=20,
+        random_state=SEED, n_jobs=-1, verbose=-1)
+    m.fit(Xl_tr.iloc[tr], y[tr])
+    oof_l[va] = m.predict_proba(Xl_tr.iloc[va])[:, 1]
+    te_l += m.predict_proba(Xl_te)[:, 1] / 5
+
+    c = CatBoostClassifier(
+        iterations=600, learning_rate=0.05, depth=6,
+        random_seed=SEED, verbose=0, thread_count=-1)
+    c.fit(Xc_tr.iloc[tr], y[tr], cat_features=cat_idx)
+    oof_c[va] = c.predict_proba(Xc_tr.iloc[va])[:, 1]
+    te_c += c.predict_proba(Xc_te)[:, 1] / 5
+
+oof = 0.5 * oof_l + 0.5 * oof_c
+te = 0.5 * te_l + 0.5 * te_c
+
+best_thr, best_f1 = 0.3, -1
+for t in np.arange(0.05, 0.8, 0.005):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f1:
+        best_f1, best_thr = f, t
+print("OOF F1: %.4f at threshold %.3f" % (best_f1, best_thr))
+
+proba = np.clip(te, 0, 1)
+label = (proba >= best_thr).astype(int)
+pd.DataFrame({"proba": proba, "label": label}).to_csv("predictions.csv", index=False)

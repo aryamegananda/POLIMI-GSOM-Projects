@@ -1,0 +1,83 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+from sklearn.ensemble import HistGradientBoostingClassifier
+import lightgbm as lgb
+
+SEED = 42
+
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+y = train["Revenue"].astype(int).values
+Xtr = train.drop(columns=["Revenue"])
+Xte = test.copy()[Xtr.columns]
+
+month_map = {"Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "June": 6, "Jun": 6,
+             "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12}
+
+
+def prep(df):
+    df = df.copy()
+    df["MonthNum"] = df["Month"].map(month_map)
+    df["Month"] = df["Month"].astype("object")
+    df["VisitorType"] = df["VisitorType"].astype("object")
+    df["VisNew"] = (df["VisitorType"] == "New_Visitor").astype(int)
+    df["VisRet"] = (df["VisitorType"] == "Returning_Visitor").astype(int)
+    df["MonthNum"] = df["MonthNum"].astype(float)
+    df = df.drop(columns=["Month", "VisitorType"])
+    df["TotalPages"] = df["Administrative"] + df["Informational"] + df["ProductRelated"]
+    df["TotalDur"] = (df["Administrative_Duration"] + df["Informational_Duration"]
+                      + df["ProductRelated_Duration"])
+    df["DurPerPage"] = df["ProductRelated_Duration"] / (df["ProductRelated"] + 1)
+    df["PV_log"] = np.log1p(df["PageValues"])
+    df["PV_pos"] = (df["PageValues"] > 0).astype(float)
+    df.loc[df["PageValues"].isna(), "PV_pos"] = np.nan
+    df["ExitBounce"] = df["ExitRates"] - df["BounceRates"]
+    df["PVxExit"] = df["PageValues"] * (1 - df["ExitRates"])
+    df["nan_count"] = df.isna().sum(axis=1)
+    return df
+
+
+Xtr = prep(Xtr)
+Xte = prep(Xte)
+
+# Impute for features with missing info: PageValues etc. LightGBM handles NaN natively.
+lgb_params = dict(n_estimators=400, learning_rate=0.02, num_leaves=15, min_child_samples=30,
+                  subsample=0.8, subsample_freq=1, colsample_bytree=0.7, reg_lambda=5.0,
+                  random_state=SEED, verbose=-1, n_jobs=4)
+
+
+def make_models():
+    return [
+        ("lgb", lgb.LGBMClassifier(**lgb_params)),
+        ("hgb", HistGradientBoostingClassifier(learning_rate=0.04, max_iter=250, max_leaf_nodes=15,
+                                               min_samples_leaf=30, l2_regularization=2.0,
+                                               random_state=SEED)),
+    ]
+
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+oof = np.zeros(len(Xtr))
+test_pred = np.zeros(len(Xte))
+for tr_idx, va_idx in skf.split(Xtr, y):
+    fold_va = []
+    fold_te = []
+    for name, m in make_models():
+        m.fit(Xtr.iloc[tr_idx], y[tr_idx])
+        fold_va.append(m.predict_proba(Xtr.iloc[va_idx])[:, 1])
+        fold_te.append(m.predict_proba(Xte)[:, 1])
+    oof[va_idx] = np.mean(fold_va, axis=0)
+    test_pred += np.mean(fold_te, axis=0) / skf.n_splits
+
+best_t, best_f = 0.5, 0
+for t in np.arange(0.15, 0.7, 0.01):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "OOF F1", best_f)
+
+out = pd.DataFrame({"proba": np.clip(test_pred, 0, 1),
+                    "label": (test_pred >= best_t).astype(int)})
+out.to_csv("predictions.csv", index=False)

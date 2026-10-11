@@ -1,0 +1,80 @@
+import pandas as pd, numpy as np
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+import xgboost as xgb
+from catboost import CatBoostClassifier
+
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+y = train["y"].values
+X = train.drop(columns=["y"])
+T = test[X.columns].copy()
+
+cat_cols = [c for c in X.columns if X[c].dtype == "object"]
+month_map = {m: i for i, m in enumerate(["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"], 1)}
+dow_map = {d: i for i, d in enumerate(["mon","tue","wed","thu","fri"], 1)}
+
+def fe(df):
+    df = df.copy()
+    df["pdays_flag"] = (df["pdays"] == 999).astype(int)
+    df["month_num"] = df["month"].map(month_map)
+    df["dow_num"] = df["day_of_week"].map(dow_map)
+    df["unknown_count"] = (df[cat_cols] == "unknown").sum(axis=1)
+    df["euribor_x_emp"] = df["euribor3m"] * df["emp.var.rate"]
+    return df
+
+X = fe(X); T = fe(T)
+
+# label-encoded version for lgb/xgb
+full = pd.concat([X, T], axis=0, ignore_index=True)
+Xl = full.copy()
+for c in cat_cols:
+    Xl[c] = Xl[c].astype("category").cat.codes
+XL, TL = Xl.iloc[:len(X)].reset_index(drop=True), Xl.iloc[len(X):].reset_index(drop=True)
+
+# catboost version
+XC, TC = X.reset_index(drop=True), T.reset_index(drop=True)
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+names = ["lgb", "cat", "xgb"]
+oof = {n: np.zeros(len(X)) for n in names}
+pt = {n: np.zeros(len(T)) for n in names}
+
+for tr, va in skf.split(XL, y):
+    m = lgb.LGBMClassifier(n_estimators=2000, learning_rate=0.02, num_leaves=15,
+                           min_child_samples=40, subsample=0.8, subsample_freq=1,
+                           colsample_bytree=0.7, reg_lambda=5, random_state=42, verbose=-1)
+    m.fit(XL.iloc[tr], y[tr], eval_set=[(XL.iloc[va], y[va])],
+          callbacks=[lgb.early_stopping(100, verbose=False)])
+    oof["lgb"][va] = m.predict_proba(XL.iloc[va])[:, 1]
+    pt["lgb"] += m.predict_proba(TL)[:, 1] / 5
+
+    m = CatBoostClassifier(iterations=1500, learning_rate=0.03, depth=6,
+                           random_seed=42, verbose=0, cat_features=cat_cols,
+                           early_stopping_rounds=100, thread_count=-1)
+    m.fit(XC.iloc[tr], y[tr], eval_set=(XC.iloc[va], y[va]))
+    oof["cat"][va] = m.predict_proba(XC.iloc[va])[:, 1]
+    pt["cat"] += m.predict_proba(TC)[:, 1] / 5
+
+    m = xgb.XGBClassifier(n_estimators=2000, learning_rate=0.02, max_depth=4,
+                          subsample=0.8, colsample_bytree=0.7, min_child_weight=3,
+                          reg_lambda=5, random_state=42, n_jobs=-1,
+                          early_stopping_rounds=100, eval_metric="logloss")
+    m.fit(XL.iloc[tr], y[tr], eval_set=[(XL.iloc[va], y[va])], verbose=False)
+    oof["xgb"][va] = m.predict_proba(XL.iloc[va])[:, 1]
+    pt["xgb"] += m.predict_proba(TL)[:, 1] / 5
+
+oof_ens = np.mean([oof[n] for n in names], axis=0)
+test_ens = np.mean([pt[n] for n in names], axis=0)
+
+best_t, best_f = 0.5, 0
+for t in np.arange(0.15, 0.7, 0.005):
+    f = f1_score(y, (oof_ens >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("best threshold", best_t, "OOF F1", best_f)
+
+out = pd.DataFrame({"proba": np.clip(test_ens, 0, 1),
+                    "label": (test_ens >= best_t).astype(int)})
+out.to_csv("predictions.csv", index=False)

@@ -1,0 +1,94 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+
+SEED = 42
+TARGET = "default.payment.next.month"
+
+train = pd.read_csv("train.csv")
+test = pd.read_csv("test_features.csv")
+
+
+def fe(df):
+    d = df.copy()
+    # clean obviously corrupted values
+    d.loc[d["LIMIT_BAL"] <= 0, "LIMIT_BAL"] = np.nan
+    d.loc[(d["AGE"] < 18) | (d["AGE"] > 100), "AGE"] = np.nan
+    pays = ["PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6"]
+    bills = [f"BILL_AMT{i}" for i in range(1, 7)]
+    pamts = [f"PAY_AMT{i}" for i in range(1, 7)]
+    d["pay_max"] = d[pays].max(axis=1)
+    d["pay_min"] = d[pays].min(axis=1)
+    d["pay_mean"] = d[pays].mean(axis=1)
+    d["pay_sum"] = d[pays].sum(axis=1)
+    d["pay_late_cnt"] = (d[pays] > 0).sum(axis=1)
+    d["pay_recent_mean"] = d[["PAY_0", "PAY_2", "PAY_3"]].mean(axis=1)
+    d["pay_trend"] = d["PAY_0"] - d["PAY_6"]
+    d["bill_sum"] = d[bills].sum(axis=1)
+    d["bill_mean"] = d[bills].mean(axis=1)
+    d["bill_std"] = d[bills].std(axis=1)
+    d["pamt_sum"] = d[pamts].sum(axis=1)
+    d["pamt_mean"] = d[pamts].mean(axis=1)
+    d["pamt_std"] = d[pamts].std(axis=1)
+    lim = d["LIMIT_BAL"]
+    for i in range(1, 7):
+        d[f"util{i}"] = d[f"BILL_AMT{i}"] / lim
+        d[f"ratio{i}"] = d[f"PAY_AMT{i}"] / (d[f"BILL_AMT{i}"].abs() + 1)
+    d["util_mean"] = d["bill_mean"] / lim
+    d["pay_to_bill"] = d["pamt_sum"] / (d["bill_sum"].abs() + 1)
+    d["pamt_to_limit"] = d["pamt_mean"] / lim
+    d["bill_diff1"] = d["BILL_AMT1"] - d["BILL_AMT2"]
+    d["bill_diff_all"] = d["BILL_AMT1"] - d["BILL_AMT6"]
+    d["unpaid1"] = d["BILL_AMT2"] - d["PAY_AMT1"]
+    d["unpaid2"] = d["BILL_AMT3"] - d["PAY_AMT2"]
+    d["unpaid_mean"] = (d[["unpaid1", "unpaid2"]].mean(axis=1))
+    d["unpaid_ratio"] = d["unpaid1"] / lim
+    d = d.replace([np.inf, -np.inf], np.nan)
+    return d
+
+
+y = train[TARGET].values
+X = fe(train.drop(columns=[TARGET]))
+Xt = fe(test[train.drop(columns=[TARGET]).columns])
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+oof_l = np.zeros(len(X))
+oof_c = np.zeros(len(X))
+te_l = np.zeros(len(Xt))
+te_c = np.zeros(len(Xt))
+
+for tr, va in skf.split(X, y):
+    m = lgb.LGBMClassifier(
+        n_estimators=400, learning_rate=0.03, num_leaves=15,
+        min_child_samples=50, subsample=0.8, subsample_freq=1,
+        colsample_bytree=0.6, reg_lambda=5.0, random_state=SEED,
+        n_jobs=-1, verbose=-1)
+    m.fit(X.iloc[tr], y[tr])
+    oof_l[va] = m.predict_proba(X.iloc[va])[:, 1]
+    te_l += m.predict_proba(Xt)[:, 1] / 5
+
+    c = CatBoostClassifier(
+        iterations=600, learning_rate=0.04, depth=6, l2_leaf_reg=5,
+        random_seed=SEED, verbose=0, thread_count=-1)
+    c.fit(X.iloc[tr], y[tr])
+    oof_c[va] = c.predict_proba(X.iloc[va])[:, 1]
+    te_c += c.predict_proba(Xt)[:, 1] / 5
+
+oof = 0.5 * oof_l + 0.5 * oof_c
+te = 0.5 * te_l + 0.5 * te_c
+
+best_t, best_f = 0.3, -1
+for t in np.arange(0.15, 0.65, 0.005):
+    f = f1_score(y, (oof >= t).astype(int))
+    if f > best_f:
+        best_f, best_t = f, t
+print("OOF F1: %.4f at threshold %.3f" % (best_f, best_t))
+
+out = pd.DataFrame({
+    "proba": np.clip(te, 0, 1),
+    "label": (te >= best_t).astype(int),
+})
+out.to_csv("predictions.csv", index=False)
