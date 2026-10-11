@@ -9,8 +9,6 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import f1_score, roc_auc_score, precision_score, recall_score
 
-import cleaning
-
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.pipeline import Pipeline
@@ -18,34 +16,25 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 
+from prepare_data import DATASETS, CONDITIONS
+
 
 # 1. Config
 SEED = 42
 PIPELINE = "manual"
 RESULTS_FILE = "results/manual_results.csv"
 
-DATASETS = {
-    "bank_marketing": {"target": "y"},
-    "online_shoppers": {"target": "Revenue"},
-    "credit_card": {"target": "default.payment.next.month"}
-}
-
-CONDITIONS = [
-    "clean", "missing_mild", "missing_severe", "outlier_mild", "outlier_severe", 
-    "noise_mild" , "noise_severe"
-]
 
 # 1b. Loading function
-def load_and_clean(ds_name, cond, target):
-    train = pd.read_csv(f"data/messy/{ds_name}/{cond}/train.csv")
+def load_data(ds_name, cond):
+    train = pd.read_csv(f"data/cleaned/{ds_name}/{cond}/train.csv")
     test = pd.read_csv(f"data/processed/{ds_name}/test.csv")
+    return train, test
 
-    rules = cleaning.VALIDITY_RULES[ds_name]
-    t0 = time.perf_counter()
-    train, report = cleaning.clean_all(train, target, rules)
-    cleaning_time = time.perf_counter() - t0
-
-    return train, test, report, cleaning_time
+def load_cleaning_report(ds_name, cond):
+    report = pd.read_csv("results/cleaning_report.csv")
+    match = report[(report["dataset"] == ds_name) & (report["condition"] == cond)]
+    return match.iloc[0]
 
 # 2. Feature Engineering
 def bank_features(df):
@@ -132,8 +121,8 @@ FEATURE_FUNCS = {
 
 
 def run_one(ds_name, cond, target):
-    # load + clean (same cleaning as Hybrid)
-    train, test, report, cleaning_time = load_and_clean(ds_name, cond, target)
+    train, test = load_data(ds_name, cond)
+    report = load_cleaning_report(ds_name, cond)
 
     # feature engineering on BOTH train and test
     add_features = FEATURE_FUNCS[ds_name]
@@ -165,7 +154,7 @@ def run_one(ds_name, cond, target):
         "auc": roc_auc_score(y_test, y_proba),
         "precision": precision_score(y_test, y_pred),
         "recall": recall_score(y_test, y_pred),
-        "cleaning_time_s": round(cleaning_time, 1),
+        "cleaning_time_s": report["cleaning_time_s"],
         "fit_time_s": round(fit_time, 1),
         "predict_time_s": round(predict_time, 2),
         "best_model": model_name,

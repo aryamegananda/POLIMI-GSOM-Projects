@@ -14,6 +14,9 @@ import pandas as pd
 from dotenv import load_dotenv
 from sklearn.metrics import f1_score, roc_auc_score, precision_score, recall_score
 
+from prepare_data import DATASETS, CONDITIONS
+
+
 # 1. Config
 PIPELINE = "llm"
 MODEL = "claude-sonnet-5-5"
@@ -22,19 +25,6 @@ N_RUNS = 3
 TIME_LIMIT_S = 900
 RESULTS_FILE = "results/llm_results.csv"
 TRANSCRIPTS_DIR = "transcripts"
-
-DATASETS = {
-    "bank_marketing":  {"target": "y"},
-    "online_shoppers": {"target": "Revenue"},
-    "credit_card":     {"target": "default.payment.next.month"},
-}
-
-CONDITIONS = [
-    "clean",
-    "missing_mild", "missing_severe",
-    "outlier_mild", "outlier_severe",
-    "noise_mild", "noise_severe",
-]
 
 PROMPT_TEMPLATE = """You are a data scientist. Build a complete machine learning pipeline for a
 binary classification task.
@@ -247,7 +237,10 @@ def run_one(client, ds_name, cond, run, target):
             return row
 
         # Score
-        metrics, problem = score_predictions(os.path.join(work_dir, "predictions.csv"), y_test)
+        try:
+            metrics, problem = score_predictions(os.path.join(work_dir, "predictions.csv"), y_test)
+        except Exception as e:
+            metrics, problem = None, f"could not read predictions: {type(e).__name__}: {e}"
         if metrics is None:
             row["status"] = "bad_output"
             row["error"] = problem

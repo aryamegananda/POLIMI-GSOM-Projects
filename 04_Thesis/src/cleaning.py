@@ -9,12 +9,11 @@ from cleanlab.filter import find_label_issues
 import sys
 sys.path.append("../src")
 from prepare_data import DATASETS
+import time
 
 
 # 1. Functions
 # 1a. Outliers Handling
-
-
 def validity_check(train, rules):
     train = train.copy()
     for col in rules:
@@ -124,7 +123,9 @@ def main():
 
         for cond in CONDITIONS:
             train = pd.read_csv(f"data/messy/{ds_name}/{cond}/train.csv")
+            t0 = time.perf_counter()
             cleaned, report = clean_all(train, ds_name)
+            report["cleaning_time_s"] = round(time.perf_counter() - t0, 1)
 
             out_dir = f"data/cleaned/{ds_name}/{cond}"
             os.makedirs(out_dir, exist_ok=True)

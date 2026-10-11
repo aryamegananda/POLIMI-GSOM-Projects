@@ -11,10 +11,14 @@ from importlib.metadata import version as pkg_version
 from autogluon.tabular import TabularPredictor
 from sklearn.metrics import f1_score, roc_auc_score, precision_score, recall_score
 
-import cleaning
+from prepare_data import DATASETS, CONDITIONS
+
+import traceback
+
 
 # 1. Config
 PIPELINE = "hybrid"
+RUN = 2
 RESULTS_FILE = "results/hybrid_results.csv"
 MODELS_DIR = "models/hybrid"
 DELETE_MODELS_AFTER_RUN = True
@@ -23,58 +27,61 @@ AG_FIT_ARGS = {
     "presets": "best_quality",
     "time_limit": 300,
     "dynamic_stacking": False,
+    "calibrate_decision_threshold": True,
 }
 AG_EVAL_METRIC = "f1"
 
 # 2. Datasets and conditions
-DATASETS = {
-    "bank_marketing":  {"target": "y"},
-    "online_shoppers": {"target": "Revenue"},
-    "credit_card":     {"target": "default.payment.next.month"},
-}
-
-CONDITIONS = [
-    "clean",
-    "missing_mild", "missing_severe",
-    "outlier_mild", "outlier_severe",
-    "noise_mild", "noise_severe",
-]
-
 
 # 3. Functions
 def already_done():
     if not os.path.exists(RESULTS_FILE):
         return set()
     done = pd.read_csv(RESULTS_FILE)
-    return set(zip(done["dataset"], done["condition"]))
+    return set(zip(done["dataset"], done["condition"], done["run"]))
 
 
 def append_result(row):
     os.makedirs(os.path.dirname(RESULTS_FILE), exist_ok=True)
-    pd.DataFrame([row]).to_csv(
-        RESULTS_FILE, mode="a", index=False, header=not os.path.exists(RESULTS_FILE)
-    )
+    new = pd.DataFrame([row])
+    if os.path.exists(RESULTS_FILE):
+        old = pd.read_csv(RESULTS_FILE)
+        new = pd.concat([old, new], ignore_index=True)
+    new.to_csv(RESULTS_FILE, index=False)
 
 
 def run_one(ds_name, cond, target):
-    train = pd.read_csv(f"data/messy/{ds_name}/{cond}/train.csv")
+    train_clean = pd.read_csv(f"data/cleaned/{ds_name}/{cond}/train.csv")
     test = pd.read_csv(f"data/processed/{ds_name}/test.csv")
 
-    # Clean (the only difference from run_automl.py)
-    rules = cleaning.VALIDITY_RULES[ds_name]
-    t0 = time.perf_counter()
-    train_clean, report = cleaning.clean_all(train, target, rules)
-    cleaning_time = time.perf_counter() - t0
+    reports = pd.read_csv("results/cleaning_report.csv")
+    match = reports[(reports["dataset"] == ds_name) & (reports["condition"] == cond)]
+    report = match.iloc[0]
 
-    model_path = f"{MODELS_DIR}/{ds_name}/{cond}"
+    model_path = f"{MODELS_DIR}/{ds_name}/{cond}/run{RUN}"
     if os.path.exists(model_path):
         shutil.rmtree(model_path)
 
-    # Fit
+    # Fit (threshold calibration done manually below: same call AutoGluon makes
+    # inside fit(), but clipped to [0, 1] because AutoGluon 1.6.3 can return
+    # a negative threshold and crash)
+    fit_args = dict(AG_FIT_ARGS)
+    fit_args["calibrate_decision_threshold"] = False
+
     t0 = time.perf_counter()
     predictor = TabularPredictor(
         label=target, eval_metric=AG_EVAL_METRIC, path=model_path, verbosity=1
-    ).fit(train_clean, **AG_FIT_ARGS)
+    ).fit(train_clean, **fit_args)
+
+    threshold = predictor.calibrate_decision_threshold()
+    threshold_clipped = False
+    if threshold < 0:
+        threshold = 0.0
+        threshold_clipped = True
+    if threshold > 1:
+        threshold = 1.0
+        threshold_clipped = True
+    predictor.set_decision_threshold(threshold)
     fit_time = time.perf_counter() - t0
 
     # Predict on clean test (test is never cleaned)
@@ -86,18 +93,18 @@ def run_one(ds_name, cond, target):
     y_proba = predictor.predict_proba(X_test)[predictor.positive_class]
     predict_time = time.perf_counter() - t0
 
-    best_model = predictor.leaderboard(silent=True).iloc[0]["model"]
+    best_model = predictor.model_best
 
     row = {
         "pipeline": PIPELINE,
         "dataset": ds_name,
         "condition": cond,
-        "run": 1,
+        "run": RUN,
         "f1": f1_score(y_test, y_pred, pos_label=predictor.positive_class),
         "auc": roc_auc_score(y_test, y_proba),
         "precision": precision_score(y_test, y_pred, pos_label=predictor.positive_class),
         "recall": recall_score(y_test, y_pred, pos_label=predictor.positive_class),
-        "cleaning_time_s": round(cleaning_time, 1),
+        "cleaning_time_s": report["cleaning_time_s"],
         "fit_time_s": round(fit_time, 1),
         "predict_time_s": round(predict_time, 2),
         "best_model": best_model,
@@ -109,6 +116,7 @@ def run_one(ds_name, cond, target):
         "n_train": report["rows_after"],
         "n_test": len(test),
         "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "threshold_clipped": threshold_clipped,
     }
 
     if DELETE_MODELS_AFTER_RUN:
@@ -140,11 +148,11 @@ def main():
         target = DATASETS[ds_name]["target"]
         for cond in selected_cond:
             i += 1
-            if (ds_name, cond) in done:
-                print(f"[{i}/{total}] {ds_name} / {cond} — already done, skipping")
+            if (ds_name, cond, RUN) in done:
+                print(f"[{i}/{total}] {ds_name} / {cond} - already done, skipping")
                 continue
 
-            print(f"\n[{i}/{total}] {ds_name} / {cond} — cleaning + fitting...")
+            print(f"\n[{i}/{total}] {ds_name} / {cond} - fitting...")
             try:
                 row = run_one(ds_name, cond, target)
                 append_result(row)
@@ -153,6 +161,7 @@ def main():
                       f"removed={row['rows_removed_label_noise']}")
             except Exception as e:
                 print(f"    FAILED: {type(e).__name__}: {e}")
+                traceback.print_exc()
 
     print(f"\nDone. Results in {RESULTS_FILE}")
 
