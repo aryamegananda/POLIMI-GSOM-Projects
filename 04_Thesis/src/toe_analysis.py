@@ -204,8 +204,9 @@ clean_f1 = f1_table.xs("clean", level="condition")
 severe_f1 = f1_table.xs("noise_severe", level="condition")
 noise_loss = (clean_f1 - severe_f1).mean().round(3).to_dict()
 
+# Hybrid excludes its 11 Oct changes (2.2 h): rerun setup + copy of the AutoML threshold fix (see 2.6.6)
 development_hours = {"AutoML": 3.6, "Hybrid": 17.5, "Manual": 18.2, "LLM": 4.7}
-hourly_rate = 16.5  # EUR per hour
+hourly_rate = 16.5 
 
 labour_cost = {}
 for pipeline in pipelines:

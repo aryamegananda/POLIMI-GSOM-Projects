@@ -1,7 +1,7 @@
 ,AutoML,Hybrid,Manual,LLM
 "Performance, ordinary data (T)",4.92,4.9,4.95,5.0
 Robustness to label noise (T),2.56,4.79,5.0,2.66
-Computation time (O),1.52,1.51,4.37,5.0
+Computation time (O),1.42,1.41,5.0,4.25
 Reproducibility (T),3.0,4.0,5.0,3.0
 Development time (O),5.0,1.82,1.79,4.06
 Cost (O),5.0,1.82,1.79,4.06

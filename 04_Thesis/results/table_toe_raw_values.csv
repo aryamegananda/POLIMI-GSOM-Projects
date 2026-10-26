@@ -1,7 +1,7 @@
 ,AutoML,Hybrid,Manual,LLM
 mean F1 excl. severe noise,0.566,0.564,0.571,0.578
 "mean F1 loss, severe noise",0.185,0.076,0.072,0.173
-median time per run (s),304.35,310.925,46.78,39.4
+median time per run (s),304.35,310.925,32.01,39.4
 max run difference,0.0728,0.0235,0.0,0.0159
 development hours,3.6,17.5,18.2,4.7
 labour cost (EUR),59.4,288.75,300.3,77.55
