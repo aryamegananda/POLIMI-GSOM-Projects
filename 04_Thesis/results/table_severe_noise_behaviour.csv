@@ -1,0 +1,6 @@
+,f1,f1,f1,f1,auc,auc,auc,auc,pred_pos_rate,pred_pos_rate,pred_pos_rate,pred_pos_rate
+pipeline,AutoML,Hybrid,Manual,LLM,AutoML,Hybrid,Manual,LLM,AutoML,Hybrid,Manual,LLM
+dataset,,,,,,,,,,,,
+bank_marketing,0.2026,0.3532,0.3796,0.2107,0.7075,0.7687,0.7964,0.8056,0.9996,0.3239,0.3159,0.9384
+credit_card,0.3629,0.4973,0.5031,0.4202,0.7303,0.7587,0.7616,0.7699,0.9977,0.3741,0.3658,0.7494
+online_shoppers,0.5983,0.6416,0.6109,0.6002,0.8922,0.8815,0.8786,0.8974,0.2774,0.18,0.2474,0.2866

@@ -39,6 +39,11 @@ f1_table = summary.pivot_table(index=["dataset", "condition"], columns="pipeline
 f1_table = f1_table[order]
 f1_table.round(3).to_csv("results/table_f1.csv")
 
+# 3b. Other metric tables (same aggregation as F1)
+for m in ["auc", "precision", "recall"]:
+    t = summary.pivot_table(index=["dataset", "condition"], columns="pipeline", values=m)
+    t[order].round(3).to_csv(f"results/table_{m}.csv")
+
 # 4. Friedman Test
 stat, p_value = friedmanchisquare(
     f1_table["AutoML"], f1_table["Hybrid"], f1_table["Manual"], f1_table["LLM"]

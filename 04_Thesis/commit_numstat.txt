@@ -1,0 +1,68 @@
+﻿COMMIT|2026-09-22 21:57:24 +0200|thesis: initial folder setup - folders, venv, git, requirements.txt, gitignore
+63	0	04_Thesis/notebooks/eda_bank_marketing.ipynb
+0	0	04_Thesis/notebooks/eda_credit_card.ipynb
+0	0	04_Thesis/notebooks/eda_online_shoppers.ipynb
+
+COMMIT|2026-09-26 23:31:07 +0200|Thesis: data prep, EDA, AutoML runs; misc project updates
+2352	20	04_Thesis/notebooks/eda_bank_marketing.ipynb
+176	0	04_Thesis/src/prepare_data.py
+142	0	04_Thesis/src/run_automl.py
+
+COMMIT|2026-10-01 16:08:12 +0200|start cleaning
+203	189	04_Thesis/notebooks/eda_bank_marketing.ipynb
+3473	0	04_Thesis/notebooks/eda_credit_card.ipynb
+2782	0	04_Thesis/notebooks/eda_online_shoppers.ipynb
+238	0	04_Thesis/notebooks/hybrid_bank_marketing.ipynb
+41	0	04_Thesis/src/cleaning.py
+2	1	04_Thesis/src/run_automl.py
+
+COMMIT|2026-10-03 23:27:58 +0200|thesis update: hybrid
+99	0	04_Thesis/notebooks/{hybrid_bank_marketing.ipynb => cleaning_pilot.ipynb}
+117	21	04_Thesis/src/cleaning.py
+161	0	04_Thesis/src/run_hybrid.py
+
+COMMIT|2026-10-05 12:49:03 +0200|thesis: start manual pipeline
+31	0	04_Thesis/src/run_manual.py
+
+COMMIT|2026-10-05 14:00:26 +0200|thesis: progress manual pipeline
+197	2	04_Thesis/src/run_manual.py
+
+COMMIT|2026-10-05 16:37:52 +0200|thesis: progress LLM pipeline
+82	0	04_Thesis/notebooks/cleaning_pilot.ipynb
+322	0	04_Thesis/src/run_llm.py
+
+COMMIT|2026-10-06 12:19:56 +0200|thesis: progress analysis
+116	0	04_Thesis/src/analysis.py
+
+COMMIT|2026-10-07 11:04:07 +0200|thesis: progress analysis
+3	16	04_Thesis/src/prepare_data.py
+
+COMMIT|2026-10-07 13:28:19 +0200|thesis: fix data
+70	24	04_Thesis/src/prepare_data.py
+
+COMMIT|2026-10-07 13:59:23 +0200|thesis: finalize data
+9	0	04_Thesis/src/check.py
+10	3	04_Thesis/src/prepare_data.py
+
+COMMIT|2026-10-07 15:08:45 +0200|thesis: fix eda online shopper
+705	526	04_Thesis/notebooks/eda_online_shoppers.ipynb
+9	0	04_Thesis/src/prepare_data.py
+
+COMMIT|2026-10-07 17:19:38 +0200|thesis: eda again
+617	674	04_Thesis/notebooks/eda_bank_marketing.ipynb
+1171	1091	04_Thesis/notebooks/eda_credit_card.ipynb
+24	0	04_Thesis/src/prepare_data.py
+
+COMMIT|2026-10-08 14:01:10 +0200|thesis: finalize cleaning pilot and cleaning
+183	313	04_Thesis/notebooks/cleaning_pilot.ipynb
+74	52	04_Thesis/src/cleaning.py
+
+COMMIT|2026-10-11 18:41:57 +0200|thesis: finalize manual hybrid and automl
+3	2	04_Thesis/src/cleaning.py
+63	45	04_Thesis/src/run_automl.py
+42	33	04_Thesis/src/run_hybrid.py
+7	14	04_Thesis/src/run_llm.py
+12	23	04_Thesis/src/run_manual.py
+
+COMMIT|2026-10-11 23:13:38 +0200|thesis: finalize LLM and analysis
+25	6	04_Thesis/src/analysis.py

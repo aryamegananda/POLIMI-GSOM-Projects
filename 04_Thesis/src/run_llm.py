@@ -117,7 +117,6 @@ def run_script(code, work_dir):
     script_path = os.path.join(work_dir, "script.py")
     save_text(script_path, code)
 
-    # the generated script must not see the API key
     env = os.environ.copy()
     env.pop("ANTHROPIC_API_KEY", None)
 
