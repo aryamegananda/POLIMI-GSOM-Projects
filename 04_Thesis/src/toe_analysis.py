@@ -204,9 +204,67 @@ clean_f1 = f1_table.xs("clean", level="condition")
 severe_f1 = f1_table.xs("noise_severe", level="condition")
 noise_loss = (clean_f1 - severe_f1).mean().round(3).to_dict()
 
-# Hybrid excludes its 11 Oct changes (2.2 h): rerun setup + copy of the AutoML threshold fix (see 2.6.6)
-development_hours = {"AutoML": 3.6, "Hybrid": 17.5, "Manual": 18.2, "LLM": 4.7}
-hourly_rate = 16.5 
+# Development time, estimated from the git history (Section 2.6.6).
+
+def project_part(file_name):
+    name = file_name.lower()
+    for pipeline in ["automl", "hybrid", "manual", "llm"]:
+        if "run_" + pipeline in name:
+            return pipeline
+    # hybrid_bank_marketing.ipynb was later renamed to cleaning_pilot.ipynb
+    if "cleaning" in name or "hybrid_bank_marketing" in name:
+        return "cleaning"
+    return "shared"
+
+
+def estimate_development_hours(python_only=False):
+    lines_per_day = {}
+    day = None
+    with open("commit_numstat.txt", encoding="utf-8-sig") as file:
+        for line in file:
+            line = line.rstrip("\n")
+            if line.startswith("COMMIT|"):
+                day = line.split("|")[1][:10]
+                continue
+            parts = line.split("\t")
+            if len(parts) != 3 or day is None:
+                continue
+            added, deleted, file_name = parts
+            if python_only and not file_name.endswith(".py"):
+                continue
+            changed = 0
+            if added != "-":
+                changed += int(added)
+            if deleted != "-":
+                changed += int(deleted)
+            part = project_part(file_name)
+            lines_per_day.setdefault(day, {})
+            lines_per_day[day][part] = lines_per_day[day].get(part, 0) + changed
+
+    part_hours = {"automl": 0, "hybrid": 0, "manual": 0, "llm": 0, "cleaning": 0, "shared": 0}
+    for day, parts in lines_per_day.items():
+        total_lines = sum(parts.values())
+        if total_lines == 0:
+            continue
+        for part, changed in parts.items():
+            if part == "hybrid" and day == "2026-10-11":
+                continue  # excluded, see Section 2.6.6
+            part_hours[part] += 8 * changed / total_lines
+
+    return {
+        "AutoML": round(part_hours["automl"], 1),
+        "Hybrid": round(part_hours["hybrid"] + part_hours["cleaning"], 1),
+        "Manual": round(part_hours["manual"] + part_hours["cleaning"], 1),
+        "LLM": round(part_hours["llm"], 1),
+    }
+
+
+development_hours = estimate_development_hours()
+development_hours_python_only = estimate_development_hours(python_only=True)
+print("\nDevelopment hours (all files):", development_hours)
+print("Development hours (Python files only, check):", development_hours_python_only)
+
+hourly_rate = 16.5  # EUR per hour (Section 2.6.7)
 
 labour_cost = {}
 for pipeline in pipelines:
